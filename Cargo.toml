@@ -21,6 +21,7 @@ pico-args = "0.3.4"
 rav1e = "0.3.3"
 rayon = "1.4.0"
 rgb = "0.8.24"
+nasm-rs = "=0.1.7"
 
 [profile.dev.package.rav1e]
 opt-level = 2
