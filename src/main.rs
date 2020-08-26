@@ -25,7 +25,7 @@ Usage:
 
 Options:
     --quality=n Quality from 1 (worst) to 100 (best)
-    --speed=n   Encoding speed from 1 (fast but ugly) to 10 (best)
+    --speed=n   Encoding speed from 1 (best) to 10 (fast but ugly)
     --overwrite Replace files if there's .avif already
     -o path     Write output to this path instead of samefile.avif
     --quiet     Don't print anything
@@ -84,15 +84,17 @@ fn run() -> Result<(), BoxError> {
     let failures = files.par_iter().map(|path| {
         let path = Path::new(&path);
         process(path).map_err(|e| -> BoxError {
-            format!("{} failed: {}", path.display(), e).into()
+            format!("{}: error: {}", path.display(), e).into()
         })
     })
     .filter_map(|res| res.err())
     .collect::<Vec<BoxError>>();
 
     if !failures.is_empty() {
-        for f in failures {
-            eprintln!("{}", f);
+        if !quiet {
+            for f in failures {
+                eprintln!("{}", f);
+            }
         }
         std::process::exit(1);
     }
