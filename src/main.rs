@@ -1,3 +1,4 @@
+use rgb::FromSlice;
 use std::fs;
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 use std::path::PathBuf;
@@ -54,7 +55,7 @@ fn run() -> Result<(), BoxError> {
 
     if files.is_empty() {
         help();
-        return Err("No PNG files specified".into());
+        return Err("No PNG/JPEG files specified".into());
     }
 
     let use_dir = output.is_some() && files.len() > 1;
@@ -65,7 +66,9 @@ fn run() -> Result<(), BoxError> {
     }
 
     let process = move |path: &Path| -> Result<(), BoxError> {
-        let img = load_rgba(&path)?;
+        let data = fs::read(&path)?;
+        let img = load_rgba(&data)?;
+        drop(data);
         let out_path = if let Some(output) = &output {
             if use_dir {
                 let file = Path::new(path.file_name().unwrap()).with_extension("avif");
@@ -109,14 +112,33 @@ fn run() -> Result<(), BoxError> {
 }
 
 #[cfg(not(feature = "cocoa_image"))]
-fn load_rgba(path: &Path) -> Result<ImgVec<RGBA8>, BoxError> {
-    let img = lodepng::decode32_file(&path)?;
-    Ok(ImgVec::new(img.buffer, img.width, img.height))
+fn load_rgba(mut data: &[u8]) -> Result<ImgVec<RGBA8>, BoxError> {
+    let img = if data.get(0..4) == Some(&[0x89,b'P',b'N',b'G']) {
+        let img = lodepng::decode32(data)?;
+        ImgVec::new(img.buffer, img.width, img.height)
+    } else {
+        let mut jecoder = jpeg_decoder::Decoder::new(&mut data);
+        let pixels = jecoder.decode()?;
+        let info = jecoder.info().ok_or("Error reading JPEG info")?;
+        use jpeg_decoder::PixelFormat::*;
+        let buf: Vec<_> = match info.pixel_format {
+            L8 => {
+                pixels.iter().copied().map(|g| RGBA8::new(g,g,g,255)).collect()
+            },
+            RGB24 => {
+                let rgb = pixels.as_rgb();
+                rgb.iter().map(|p| p.alpha(255)).collect()
+            },
+            CMYK32 => return Err("CMYK JPEG is not supported. Please convert to PNG first".into()),
+        };
+        ImgVec::new(buf, info.width.into(), info.height.into())
+    };
+    Ok(img)
 }
 
 #[cfg(feature = "cocoa_image")]
-fn load_rgba(path: &Path) -> Result<ImgVec<RGBA8>, BoxError> {
+fn load_rgba(data: &[u8]) -> Result<ImgVec<RGBA8>, BoxError> {
     let data = fs::read(path)?;
-    Ok(cocoa_image::decode_image_as_rgba(&data)?)
+    Ok(cocoa_image::decode_image_as_rgba(data)?)
 }
 

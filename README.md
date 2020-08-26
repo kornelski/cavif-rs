@@ -1,4 +1,4 @@
-# `cavif` — PNG to AVIF converter
+# `cavif` — PNG/JPEG to AVIF converter
 
 Encoder/converter for AVIF images. Based on [rav1e](//lib.rs/rav1e) and [avif-serialize](//lib.rs/avif-serialize), which makes it pure Rust, with no C code!
 
