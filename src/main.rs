@@ -64,11 +64,15 @@ fn run() -> Result<(), BoxError> {
         }
     }
 
-    let process = |path: &Path| -> Result<(), BoxError> {
+    let process = move |path: &Path| -> Result<(), BoxError> {
         let img = load_rgba(&path)?;
-        let out_path = if use_dir {
-            let file = Path::new(path.file_name().unwrap()).with_extension("avif");
-            output.as_ref().unwrap().join(file)
+        let out_path = if let Some(output) = &output {
+            if use_dir {
+                let file = Path::new(path.file_name().unwrap()).with_extension("avif");
+                output.join(file)
+            } else {
+                output.to_owned()
+            }
         } else {
             path.with_extension("avif")
         };
