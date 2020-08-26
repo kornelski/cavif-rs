@@ -138,7 +138,6 @@ fn load_rgba(mut data: &[u8]) -> Result<ImgVec<RGBA8>, BoxError> {
 
 #[cfg(feature = "cocoa_image")]
 fn load_rgba(data: &[u8]) -> Result<ImgVec<RGBA8>, BoxError> {
-    let data = fs::read(path)?;
     Ok(cocoa_image::decode_image_as_rgba(data)?)
 }
 
