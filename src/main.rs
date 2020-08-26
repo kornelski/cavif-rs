@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::path::Path;
 use rayon::prelude::*;
 mod av1encoder;
+use rgb::RGBA8;
+use imgref::ImgVec;
 
 fn main() {
     if let Err(e) = run() {
@@ -63,7 +65,7 @@ fn run() -> Result<(), BoxError> {
     }
 
     let process = |path: &Path| -> Result<(), BoxError> {
-        let img = lodepng::decode32_file(&path)?;
+        let img = load_rgba(&path)?;
         let out_path = if use_dir {
             let file = Path::new(path.file_name().unwrap()).with_extension("avif");
             output.as_ref().unwrap().join(file)
@@ -73,7 +75,8 @@ fn run() -> Result<(), BoxError> {
         if !overwrite && out_path.exists() {
             return Err(format!("{} already exists; skipping", out_path.display()).into())
         }
-        let (out_data, color_size, alpha_size) = av1encoder::encode_rgba(img.width, img.height, &img.buffer, quality, speed)?;
+        let (buffer, width, height) = img.into_contiguous_buf();
+        let (out_data, color_size, alpha_size) = av1encoder::encode_rgba(width, height, &buffer, quality, speed)?;
         if !quiet {
             println!("{}: {}KB ({}B color, {}B alpha, {}B HEIF)", out_path.display(), (out_data.len()+999)/1000, color_size, alpha_size, out_data.len() - color_size - alpha_size);
         }
@@ -100,3 +103,16 @@ fn run() -> Result<(), BoxError> {
     }
     Ok(())
 }
+
+#[cfg(not(feature = "cocoa_image"))]
+fn load_rgba(path: &Path) -> Result<ImgVec<RGBA8>, BoxError> {
+    let img = lodepng::decode32_file(&path)?;
+    Ok(ImgVec::new(img.buffer, img.width, img.height))
+}
+
+#[cfg(feature = "cocoa_image")]
+fn load_rgba(path: &Path) -> Result<ImgVec<RGBA8>, BoxError> {
+    let data = fs::read(path)?;
+    Ok(cocoa_image::decode_image_as_rgba(&data)?)
+}
+
