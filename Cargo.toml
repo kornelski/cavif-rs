@@ -1,0 +1,29 @@
+[package]
+name = "cavif"
+description = "Encodes images in AVIF format (png2avif converter). Pure Rust."
+version = "0.1.0"
+authors = ["Kornel Lesiński <kornel@geekhood.net>"]
+edition = "2018"
+license = "BSD-3-Clause"
+readme = "README.md"
+keywords = ["avif", "png2avif", "convert", "av1"]
+categories = ["command-line-utilities", "multimedia::images", "multimedia::encoding"]
+homepage = "https://lib.rs/cavif"
+repository = "https://github.com/kornelski/cavif"
+include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
+
+[dependencies]
+avif-serialize = "0.6.0"
+clap = "2.33.3"
+lodepng = "3.2.1"
+num_cpus = "1.13.0"
+pico-args = "0.3.4"
+rav1e = "0.3.3"
+rayon = "1.4.0"
+rgb = "0.8.24"
+
+[profile.dev.package.rav1e]
+opt-level = 2
+
+[profile.dev.package.lodepng]
+opt-level = 2
