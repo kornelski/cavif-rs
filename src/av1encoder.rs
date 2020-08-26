@@ -30,7 +30,7 @@ pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], quality: u8, s
     let (color, alpha) = rayon::join(
         || encode_to_av1(width, height, &[&y_plane, &u_plane, &v_plane], quantizer, speed, PixelRange::Limited, ChromaSampling::Cs444, color_description),
         || if use_alpha {
-            Some(encode_to_av1(width, height, &[&a_plane], quantizer, speed, PixelRange::Full, ChromaSampling::Cs420, None))
+            Some(encode_to_av1(width, height, &[&a_plane], quantizer, speed, PixelRange::Full, ChromaSampling::Cs400, None))
           } else {
             None
         });
@@ -48,11 +48,9 @@ fn encode_to_av1(width: usize, height: usize, planes: &[&[u8]], quantizer: usize
     // except when it'd create inefficiently tiny tiles
     let tiles = num_cpus::get().min((width*height) / (128*128));
 
-    let cfg = Config {
-        enc: EncoderConfig {
-    // let cfg = Config::new()
-    //     .with_threads(num_cpus::get())
-    //     .with_encoder_config(EncoderConfig {
+    let cfg = Config::new()
+        .with_threads(num_cpus::get())
+        .with_encoder_config(EncoderConfig {
         width,
         height,
         time_base: Rational::new(1, 1),
@@ -83,11 +81,8 @@ fn encode_to_av1(width: usize, height: usize, planes: &[&[u8]], quantizer: usize
         tile_rows: 0,
         tiles,
         rdo_lookahead_frames: 1,
-        show_psnr: false,
         speed_settings: SpeedSettings::from_preset(speed.into()),
-    },
-        threads: num_cpus::get(),
-    };
+    });
 
     let mut ctx: Context<u8> = cfg.new_context()?;
     let mut frame = ctx.new_frame();

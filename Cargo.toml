@@ -18,7 +18,7 @@ clap = "2.33.3"
 lodepng = "3.2.1"
 num_cpus = "1.13.0"
 pico-args = "0.3.4"
-rav1e = "0.3.3"
+rav1e = { git = "https://github.com/xiph/rav1e" }
 rayon = "1.4.0"
 rgb = "0.8.24"
 nasm-rs = "=0.1.7"
