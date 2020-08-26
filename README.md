@@ -4,9 +4,14 @@ Encoder/converter for AVIF images. Based on [rav1e](//lib.rs/rav1e) and [avif-se
 
 ## Installation
 
-[Download the latest release](https://github.com/kornelski/cavif/releases), or:
+➡️ **[Download the latest release](https://github.com/kornelski/cavif/releases)** ⬅️
 
-Install Rust 1.46 or later, preferably via [rustup](//rustup.rs), then run in a terminal:
+Alternatively, build it from source. It requires:
+
+* Rust 1.45 or later, preferably via [rustup](//rustup.rs)
+* [`nasm`](https://www.nasm.us/) 2.14 or later
+
+Then run in a terminal:
 
 ```bash
 cargo install cavif
