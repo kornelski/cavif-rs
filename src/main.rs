@@ -1,12 +1,12 @@
 use rgb::FromSlice;
 use std::fs;
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
-use std::path::PathBuf;
-use std::path::Path;
 use rayon::prelude::*;
+use std::path::Path;
+use std::path::PathBuf;
 mod av1encoder;
-use rgb::RGBA8;
 use imgref::ImgVec;
+use rgb::RGBA8;
 
 fn main() {
     if let Err(e) = run() {
@@ -33,7 +33,8 @@ Options:
     -o path     Write output to this path instead of samefile.avif
     --quiet     Don't print anything
 ",
-env!("CARGO_PKG_VERSION"));
+        env!("CARGO_PKG_VERSION")
+    );
 }
 
 fn run() -> Result<(), BoxError> {
@@ -44,7 +45,9 @@ fn run() -> Result<(), BoxError> {
         std::process::exit(0);
     }
 
-    let output = args.opt_value_from_os_str(["-o", "--output"], |s| Ok::<_,std::convert::Infallible>(PathBuf::from(s)))?;
+    let output = args.opt_value_from_os_str(["-o", "--output"], |s| {
+        Ok::<_, std::convert::Infallible>(PathBuf::from(s))
+    })?;
     let quality = args.opt_value_from_str(["-Q", "--quality"])?.unwrap_or(80);
     let speed = args.opt_value_from_str(["-s", "--speed"])?.unwrap_or(1);
     let overwrite = args.contains(["-f", "--overwrite"]);
@@ -80,7 +83,7 @@ fn run() -> Result<(), BoxError> {
             path.with_extension("avif")
         };
         if !overwrite && out_path.exists() {
-            return Err(format!("{} already exists; skipping", out_path.display()).into())
+            return Err(format!("{} already exists; skipping", out_path.display()).into());
         }
         let (buffer, width, height) = img.into_contiguous_buf();
         let (out_data, color_size, alpha_size) = av1encoder::encode_rgba(width, height, &buffer, quality, speed)?;

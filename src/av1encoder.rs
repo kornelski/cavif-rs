@@ -1,5 +1,5 @@
-use rgb::RGBA8;
 use rav1e::prelude::*;
+use rgb::RGBA8;
 
 pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], quality: u8, speed: u8) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
     let mut y_plane = Vec::with_capacity(width*height);
@@ -46,7 +46,7 @@ pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], quality: u8, s
 fn encode_to_av1(width: usize, height: usize, planes: &[&[u8]], quantizer: usize, speed: u8, pixel_range: PixelRange, chroma_sampling: ChromaSampling, color_description: Option<ColorDescription>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     // AV1 needs all the CPU power you can give it,
     // except when it'd create inefficiently tiny tiles
-    let tiles = num_cpus::get().min((width*height) / (128*128));
+    let tiles = num_cpus::get().min((width * height) / (128 * 128));
 
     let cfg = Config::new()
         .with_threads(num_cpus::get())
@@ -97,13 +97,11 @@ fn encode_to_av1(width: usize, height: usize, planes: &[&[u8]], quantizer: usize
     let mut out = Vec::new();
     loop {
         match ctx.receive_packet() {
-            Ok(mut packet) => {
-                match packet.frame_type {
-                    FrameType::KEY => {
-                        out.append(&mut packet.data);
-                    },
-                    _ => continue,
+            Ok(mut packet) => match packet.frame_type {
+                FrameType::KEY => {
+                    out.append(&mut packet.data);
                 }
+                _ => continue,
             },
             Err(EncoderStatus::Encoded) |
             Err(EncoderStatus::LimitReached) => break,
