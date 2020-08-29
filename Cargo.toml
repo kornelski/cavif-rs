@@ -13,7 +13,7 @@ repository = "https://github.com/kornelski/cavif"
 include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
 
 [dependencies]
-avif-serialize = "0.6.0"
+avif-serialize = "0.6.4"
 clap = "2.33.3"
 lodepng = "3.2.1"
 num_cpus = "1.13.0"
@@ -33,4 +33,4 @@ opt-level = 2
 opt-level = 2
 
 [dev-dependencies]
-avif-parse = "0.12.0"
+avif-parse = "0.12.2"

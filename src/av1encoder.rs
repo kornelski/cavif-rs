@@ -1,7 +1,14 @@
 use rav1e::prelude::*;
 use rgb::RGBA8;
 
-pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], quality: u8, speed: u8) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
+#[derive(Debug, Copy, Clone)]
+pub struct EncConfig {
+    pub quality: u8,
+    pub speed: u8,
+    pub premultiplied_alpha: bool,
+}
+
+pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
     let mut y_plane = Vec::with_capacity(width*height);
     let mut u_plane = Vec::with_capacity(width*height);
     let mut v_plane = Vec::with_capacity(width*height);
@@ -18,7 +25,7 @@ pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], quality: u8, s
     }
 
     // quality setting
-    let quantizer = ((1.-(quality as f32)/100.) * 255.).round().max(0.).min(255.) as usize;
+    let quantizer = ((1.-(config.quality as f32)/100.) * 255.).round().max(0.).min(255.) as usize;
     let use_alpha = a_plane.iter().copied().any(|b| b != 255);
 
     let color_description = Some(ColorDescription {
@@ -28,15 +35,17 @@ pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], quality: u8, s
     });
     // Firefox 81 doesn't support Full yet, but doesn't support alpha either
     let (color, alpha) = rayon::join(
-        || encode_to_av1(width, height, &[&y_plane, &u_plane, &v_plane], quantizer, speed, PixelRange::Limited, ChromaSampling::Cs444, color_description),
+        || encode_to_av1(width, height, &[&y_plane, &u_plane, &v_plane], quantizer, config.speed, PixelRange::Limited, ChromaSampling::Cs444, color_description),
         || if use_alpha {
-            Some(encode_to_av1(width, height, &[&a_plane], quantizer, speed, PixelRange::Full, ChromaSampling::Cs400, None))
+            Some(encode_to_av1(width, height, &[&a_plane], quantizer, config.speed, PixelRange::Full, ChromaSampling::Cs400, None))
           } else {
             None
         });
     let (color, alpha) = (color?, alpha.transpose()?);
 
-    let out = avif_serialize::serialize_to_vec(&color, alpha.as_deref(), width as u32, height as u32, 8);
+    let out = avif_serialize::Aviffy::new()
+        .premultiplied_alpha(config.premultiplied_alpha)
+        .to_vec(&color, alpha.as_deref(), width as u32, height as u32, 8);
     let color_size = color.len();
     let alpha_size = alpha.as_ref().map_or(0, |a| a.len());
 

@@ -1,4 +1,3 @@
-use rgb::FromSlice;
 use std::fs;
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 use rayon::prelude::*;
@@ -52,6 +51,7 @@ fn run() -> Result<(), BoxError> {
     let speed = args.opt_value_from_str(["-s", "--speed"])?.unwrap_or(1);
     let overwrite = args.contains(["-f", "--overwrite"]);
     let quiet = args.contains(["-q", "--quiet"]);
+    let premultiplied_alpha = args.contains("--premultiplied-alpha");
 
     let mut files = args.free_os()?;
     files.retain(|path| Path::new(&path).extension().map_or(true, |e| e != "avif"));
@@ -70,7 +70,7 @@ fn run() -> Result<(), BoxError> {
 
     let process = move |path: &Path| -> Result<(), BoxError> {
         let data = fs::read(&path)?;
-        let img = load_rgba(&data)?;
+        let img = load_rgba(&data, premultiplied_alpha)?;
         drop(data);
         let out_path = if let Some(output) = &output {
             if use_dir {
@@ -86,7 +86,7 @@ fn run() -> Result<(), BoxError> {
             return Err(format!("{} already exists; skipping", out_path.display()).into());
         }
         let (buffer, width, height) = img.into_contiguous_buf();
-        let (out_data, color_size, alpha_size) = av1encoder::encode_rgba(width, height, &buffer, quality, speed)?;
+        let (out_data, color_size, alpha_size) = av1encoder::encode_rgba(width, height, &buffer, &av1encoder::EncConfig {quality, speed, premultiplied_alpha})?;
         if !quiet {
             println!("{}: {}KB ({}B color, {}B alpha, {}B HEIF)", out_path.display(), (out_data.len()+999)/1000, color_size, alpha_size, out_data.len() - color_size - alpha_size);
         }
@@ -115,8 +115,10 @@ fn run() -> Result<(), BoxError> {
 }
 
 #[cfg(not(feature = "cocoa_image"))]
-fn load_rgba(mut data: &[u8]) -> Result<ImgVec<RGBA8>, BoxError> {
-    let img = if data.get(0..4) == Some(&[0x89,b'P',b'N',b'G']) {
+fn load_rgba(mut data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, BoxError> {
+    use rgb::FromSlice;
+
+    let mut img = if data.get(0..4) == Some(&[0x89,b'P',b'N',b'G']) {
         let img = lodepng::decode32(data)?;
         ImgVec::new(img.buffer, img.width, img.height)
     } else {
@@ -136,11 +138,22 @@ fn load_rgba(mut data: &[u8]) -> Result<ImgVec<RGBA8>, BoxError> {
         };
         ImgVec::new(buf, info.width.into(), info.height.into())
     };
+    if premultiplied_alpha {
+        img.pixels_mut().for_each(|px| {
+            px.r = (px.r as u16 * px.a as u16 / 255) as u8;
+            px.g = (px.g as u16 * px.a as u16 / 255) as u8;
+            px.b = (px.b as u16 * px.a as u16 / 255) as u8;
+        });
+    }
     Ok(img)
 }
 
 #[cfg(feature = "cocoa_image")]
-fn load_rgba(data: &[u8]) -> Result<ImgVec<RGBA8>, BoxError> {
-    Ok(cocoa_image::decode_image_as_rgba(data)?)
+fn load_rgba(data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, BoxError> {
+    if premultiplied_alpha {
+        Ok(cocoa_image::decode_image_as_rgba_premultiplied(data)?)
+    } else {
+        Ok(cocoa_image::decode_image_as_rgba(data)?)
+    }
 }
 
