@@ -74,12 +74,12 @@ fn run() -> Result<(), BoxError> {
     let use_dir = output.is_some() && files.len() > 1;
     if let Some(out) = &output {
         if use_dir {
-            fs::create_dir_all(out)?;
+            let _ = fs::create_dir_all(out);
         }
     }
 
     let process = move |path: &Path| -> Result<(), BoxError> {
-        let data = fs::read(&path)?;
+        let data = fs::read(&path).map_err(|e| format!("Unable to read input image {}: {}", path.display(), e))?;
         let mut img = load_rgba(&data, premultiplied_alpha)?;
         drop(data);
         let out_path = if let Some(output) = &output {
@@ -106,7 +106,7 @@ fn run() -> Result<(), BoxError> {
         if !quiet {
             println!("{}: {}KB ({}B color, {}B alpha, {}B HEIF)", out_path.display(), (out_data.len()+999)/1000, color_size, alpha_size, out_data.len() - color_size - alpha_size);
         }
-        fs::write(out_path, out_data)?;
+        fs::write(&out_path, out_data).map_err(|e| format!("Unable to write output image {}: {}", out_path.display(), e))?;
         Ok(())
     };
 
