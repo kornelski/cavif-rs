@@ -30,8 +30,8 @@ Usage:
     cavif [OPTIONS] IMAGES...
 
 Options:
-    --quality=n   Quality from 1 (worst) to 100 (best)
-    --speed=n     Encoding speed from 1 (best) to 10 (fast but ugly)
+    --quality=n   Quality from 1 (worst) to 100 (best), the default value is 80
+    --speed=n     Encoding speed from 1 (best) to 10 (fast but ugly), the default value is 1
     --overwrite   Replace files if there's .avif already
     -o path       Write output to this path instead of samefile.avif
     --quiet       Don't print anything
