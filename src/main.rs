@@ -44,6 +44,11 @@ Options:
 fn run() -> Result<(), BoxError> {
     let mut args = pico_args::Arguments::from_env();
 
+    if args.contains("--version") {
+        println!("cavif {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+
     if args.contains(["-h", "--help"]) {
         help();
         std::process::exit(0);
