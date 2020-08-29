@@ -71,9 +71,12 @@ fn run() -> Result<(), BoxError> {
         return Err("No PNG/JPEG files specified".into());
     }
 
-    let use_dir = output.is_some() && files.len() > 1;
+    let mut use_dir = output.is_some() && files.len() > 1;
     if let Some(out) = &output {
-        if use_dir {
+        if out.is_dir() {
+            use_dir = true;
+        }
+        else if use_dir {
             let _ = fs::create_dir_all(out);
         }
     }
