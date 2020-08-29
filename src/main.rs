@@ -53,6 +53,7 @@ fn run() -> Result<(), BoxError> {
         Ok::<_, std::convert::Infallible>(PathBuf::from(s))
     })?;
     let quality = args.opt_value_from_str(["-Q", "--quality"])?.unwrap_or(80);
+    let alpha_quality = ((quality + 100)/2).min(quality + quality/4 + 2);
     let speed = args.opt_value_from_str(["-s", "--speed"])?.unwrap_or(1);
     let overwrite = args.contains(["-f", "--overwrite"]);
     let quiet = args.contains(["-q", "--quiet"]);
@@ -98,7 +99,10 @@ fn run() -> Result<(), BoxError> {
             img = cleared_alpha(img);
         }
         let (buffer, width, height) = img.into_contiguous_buf();
-        let (out_data, color_size, alpha_size) = av1encoder::encode_rgba(width, height, &buffer, &av1encoder::EncConfig {quality, speed, premultiplied_alpha})?;
+        let (out_data, color_size, alpha_size) = av1encoder::encode_rgba(width, height, &buffer, &av1encoder::EncConfig {
+            quality, speed,
+            alpha_quality, premultiplied_alpha
+        })?;
         if !quiet {
             println!("{}: {}KB ({}B color, {}B alpha, {}B HEIF)", out_path.display(), (out_data.len()+999)/1000, color_size, alpha_size, out_data.len() - color_size - alpha_size);
         }

@@ -4,6 +4,7 @@ use rgb::RGBA8;
 #[derive(Debug, Copy, Clone)]
 pub struct EncConfig {
     pub quality: u8,
+    pub alpha_quality: u8,
     pub speed: u8,
     pub premultiplied_alpha: bool,
 }
@@ -25,7 +26,8 @@ pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], config: &EncCo
     }
 
     // quality setting
-    let quantizer = ((1.-(config.quality as f32)/100.) * 255.).round().max(0.).min(255.) as usize;
+    let quantizer = quality_to_quantizer(config.quality);
+    let alpha_quantizer = quality_to_quantizer(config.alpha_quality);
     let use_alpha = a_plane.iter().copied().any(|b| b != 255);
 
     let color_description = Some(ColorDescription {
@@ -37,7 +39,7 @@ pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], config: &EncCo
     let (color, alpha) = rayon::join(
         || encode_to_av1(width, height, &[&y_plane, &u_plane, &v_plane], quantizer, config.speed, PixelRange::Limited, ChromaSampling::Cs444, color_description),
         || if use_alpha {
-            Some(encode_to_av1(width, height, &[&a_plane], quantizer, config.speed, PixelRange::Full, ChromaSampling::Cs400, None))
+            Some(encode_to_av1(width, height, &[&a_plane], alpha_quantizer, config.speed, PixelRange::Full, ChromaSampling::Cs400, None))
           } else {
             None
         });
@@ -50,6 +52,10 @@ pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], config: &EncCo
     let alpha_size = alpha.as_ref().map_or(0, |a| a.len());
 
     Ok((out, color_size, alpha_size))
+}
+
+fn quality_to_quantizer(quality: u8) -> usize {
+    ((1.-(quality as f32)/100.) * 255.).round().max(0.).min(255.) as usize
 }
 
 fn encode_to_av1(width: usize, height: usize, planes: &[&[u8]], quantizer: usize, speed: u8, pixel_range: PixelRange, chroma_sampling: ChromaSampling, color_description: Option<ColorDescription>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
