@@ -1,11 +1,15 @@
-use std::fs;
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
+use imgref::ImgVec;
 use rayon::prelude::*;
+use rgb::RGBA8;
+use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
+
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
 mod av1encoder;
-use imgref::ImgVec;
-use rgb::RGBA8;
+mod dirtyalpha;
+use crate::dirtyalpha::cleared_alpha;
 
 fn main() {
     if let Err(e) = run() {
@@ -26,11 +30,12 @@ Usage:
     cavif [OPTIONS] IMAGES...
 
 Options:
-    --quality=n Quality from 1 (worst) to 100 (best)
-    --speed=n   Encoding speed from 1 (best) to 10 (fast but ugly)
-    --overwrite Replace files if there's .avif already
-    -o path     Write output to this path instead of samefile.avif
-    --quiet     Don't print anything
+    --quality=n   Quality from 1 (worst) to 100 (best)
+    --speed=n     Encoding speed from 1 (best) to 10 (fast but ugly)
+    --overwrite   Replace files if there's .avif already
+    -o path       Write output to this path instead of samefile.avif
+    --quiet       Don't print anything
+    --dirty-alpha Keep RGB colors of fully-transparent pixels
 ",
         env!("CARGO_PKG_VERSION")
     );
@@ -52,6 +57,10 @@ fn run() -> Result<(), BoxError> {
     let overwrite = args.contains(["-f", "--overwrite"]);
     let quiet = args.contains(["-q", "--quiet"]);
     let premultiplied_alpha = args.contains("--premultiplied-alpha");
+    let dirty_alpha = args.contains("--dirty-alpha");
+    if dirty_alpha && premultiplied_alpha {
+        return Err("premultiplied alpha option makes dirty alpha impossible".into());
+    }
 
     let mut files = args.free_os()?;
     files.retain(|path| Path::new(&path).extension().map_or(true, |e| e != "avif"));
@@ -70,7 +79,7 @@ fn run() -> Result<(), BoxError> {
 
     let process = move |path: &Path| -> Result<(), BoxError> {
         let data = fs::read(&path)?;
-        let img = load_rgba(&data, premultiplied_alpha)?;
+        let mut img = load_rgba(&data, premultiplied_alpha)?;
         drop(data);
         let out_path = if let Some(output) = &output {
             if use_dir {
@@ -84,6 +93,9 @@ fn run() -> Result<(), BoxError> {
         };
         if !overwrite && out_path.exists() {
             return Err(format!("{} already exists; skipping", out_path.display()).into());
+        }
+        if !dirty_alpha && !premultiplied_alpha {
+            img = cleared_alpha(img);
         }
         let (buffer, width, height) = img.into_contiguous_buf();
         let (out_data, color_size, alpha_size) = av1encoder::encode_rgba(width, height, &buffer, &av1encoder::EncConfig {quality, speed, premultiplied_alpha})?;
@@ -156,4 +168,3 @@ fn load_rgba(data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, Bo
         Ok(cocoa_image::decode_image_as_rgba(data)?)
     }
 }
-
