@@ -20,12 +20,12 @@ num_cpus = "1.13.0"
 pico-args = "0.3.4"
 rav1e = { git = "https://github.com/xiph/rav1e" }
 rayon = "1.4.0"
-rgb = "0.8.24"
 nasm-rs = "=0.1.7"
+rgb = "0.8.25"
 cocoa_image = { version = "1.0.4", optional = true }
 imgref = "1.7.0"
 jpeg-decoder = "0.1.20"
-loop9 = "0.1.2"
+loop9 = "0.1.3"
 
 [profile.dev.package.rav1e]
 opt-level = 2

@@ -4,11 +4,12 @@ use rgb::ComponentMap;
 use rgb::RGB;
 use rgb::RGBA8;
 
-fn weighed_pixel(px: RGBA8) -> (u8, RGB<u32>) {
+#[inline]
+fn weighed_pixel(px: RGBA8) -> (u16, RGB<u32>) {
     if px.a == 0 {
         return (0, RGB::new(0,0,0))
     }
-    let weight = 255 - px.a;
+    let weight = 256 - px.a as u16;
     (weight, RGB::new(
         px.r as u32 * weight as u32,
         px.g as u32 * weight as u32,
@@ -17,19 +18,21 @@ fn weighed_pixel(px: RGBA8) -> (u8, RGB<u32>) {
 
 pub fn cleared_alpha(mut img: ImgVec<RGBA8>) -> ImgVec<RGBA8> {
     // get dominant visible transparent color (excluding opaque pixels)
-    let (weights, sum) = img.pixels()
-        .filter_map(|px| {
-            if px.a != 255 && px.a != 0 {
-                Some(weighed_pixel(px))
-            } else {
-                None
-            }
-        })
-        .fold((0u64, RGB::new(0,0,0)), |mut sum, item| {
-            sum.0 += item.0 as u64;
-            sum.1 += item.1.map(|c| c as u64);
-            sum
-        });
+    let mut sum = RGB::new(0,0,0);
+    let mut weights = 0;
+
+    // Only consider colors around transparent images
+    // (e.g. solid semitransparent area doesn't need to contribute)
+    loop9::loop9_img(img.as_ref(), |_, _, top, mid, bot| {
+        if mid.curr.a == 255 || mid.curr.a == 0 {
+            return;
+        }
+        if chain(&top, &mid, &bot).any(|px| px.a == 0) {
+            let (w, px) = weighed_pixel(mid.curr);
+            weights += w as u64;
+            sum += px.map(|c| c as u64);
+        }
+    });
     if weights == 0 {
         return img; // opaque image
     }
@@ -49,21 +52,13 @@ fn bleed_opaque_color(img: ImgRef<RGBA8>) -> ImgVec<RGBA8> {
         out.push(if mid.curr.a == 255 {
             mid.curr
         } else {
-            let (weights, sum) = [
-                weighed_pixel(top.prev),
-                weighed_pixel(top.curr),
-                weighed_pixel(top.next),
-                weighed_pixel(mid.prev),
-                weighed_pixel(mid.curr),
-                weighed_pixel(mid.next),
-                weighed_pixel(bot.prev),
-                weighed_pixel(bot.curr),
-                weighed_pixel(bot.next),
-            ].iter().fold((0u32, RGB::new(0,0,0)), |mut sum, item| {
-                sum.0 += item.0 as u32;
-                sum.1 += item.1;
-                sum
-            });
+            let (weights, sum) = chain(&top, &mid, &bot)
+                .map(|c| weighed_pixel(*c))
+                .fold((0u32, RGB::new(0,0,0)), |mut sum, item| {
+                    sum.0 += item.0 as u32;
+                    sum.1 += item.1;
+                    sum
+                });
             if weights != 0 {
                 let mut avg = sum.map(|c| (c / weights) as u8);
                 if mid.curr.a == 0 {
@@ -91,16 +86,8 @@ fn blur_transparent_pixels(img: ImgRef<RGBA8>) -> ImgVec<RGBA8> {
         out.push(if mid.curr.a == 255 {
             mid.curr
         } else {
-            let sum =
-                top.prev.rgb().map(|c| c as u16) +
-                top.curr.rgb().map(|c| c as u16) +
-                top.next.rgb().map(|c| c as u16) +
-                mid.prev.rgb().map(|c| c as u16) +
-                mid.curr.rgb().map(|c| c as u16) +
-                mid.next.rgb().map(|c| c as u16) +
-                bot.prev.rgb().map(|c| c as u16) +
-                bot.curr.rgb().map(|c| c as u16) +
-                bot.next.rgb().map(|c| c as u16);
+            let sum: RGB<u16> =
+                chain(&top, &mid, &bot).map(|px| px.rgb().map(|c| c as u16)).sum();
             let mut avg = sum.map(|c| (c / 9) as u8);
             if mid.curr.a == 0 {
                 avg.alpha(0)
@@ -117,12 +104,19 @@ fn blur_transparent_pixels(img: ImgRef<RGBA8>) -> ImgVec<RGBA8> {
     ImgVec::new(out, img.width(), img.height())
 }
 
+#[inline(always)]
+fn chain<'a, T>(top: &'a loop9::Triple<T>, mid: &'a loop9::Triple<T>, bot: &'a loop9::Triple<T>) -> impl Iterator<Item = &'a T> + 'a {
+    top.iter().chain(mid.iter()).chain(bot.iter())
+}
+
+#[inline]
 fn clamp(px: u8, (min, max): (u8, u8)) -> u8 {
     px.max(min).min(max)
 }
 
 /// safe range to change px color given its alpha
 /// (mostly-transparent colors tolerate more variation)
+#[inline]
 fn premultiplied_minmax(px: u8, alpha: u8) -> (u8, u8) {
     let alpha = alpha as u16;
     let rounded = (px as u16) * alpha / 255 * 255;
