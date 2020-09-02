@@ -69,6 +69,7 @@ fn encode_to_av1(width: usize, height: usize, planes: &[&[u8]], quantizer: usize
         width,
         height,
         time_base: Rational::new(1, 1),
+        sample_aspect_ratio: Rational::new(1, 1),
         bit_depth: 8,
         chroma_sampling,
         chroma_sample_position: if chroma_sampling == ChromaSampling::Cs400 {

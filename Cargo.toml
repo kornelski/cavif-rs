@@ -1,7 +1,7 @@
 [package]
 name = "cavif"
 description = "Encodes images in AVIF format (image2avif converter). Pure Rust."
-version = "0.4.0"
+version = "0.4.1"
 authors = ["Kornel Lesiński <kornel@geekhood.net>"]
 edition = "2018"
 license = "BSD-3-Clause"
@@ -20,7 +20,6 @@ num_cpus = "1.13.0"
 pico-args = "0.3.4"
 rav1e = { git = "https://github.com/xiph/rav1e" }
 rayon = "1.4.0"
-nasm-rs = "=0.1.7"
 rgb = "0.8.25"
 cocoa_image = { version = "1.0.4", optional = true }
 imgref = "1.7.0"
