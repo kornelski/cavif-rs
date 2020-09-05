@@ -46,4 +46,4 @@ cavif [OPTIONS] IMAGES...
  * `--quiet` — Don't print anything during conversion.
  * `--premultiplied-alpha` — Warning: [currently incompatible with libavif](https://github.com/AOMediaCodec/libavif/issues/292). Improves compression of transparent images by clearing RGB of fully transparent pixels and lowering quality of semi-transparent colors.
  * `--dirty-alpha` — Don't change RGB values of transparent pixels. By default irrelevant color of transparent pixels is cleared to avoid wasting space.
-
+ * `--color=rgb` — encode using RGB color space instead of YCbCr color space. Makes color closer to lossless, but makes files larger.

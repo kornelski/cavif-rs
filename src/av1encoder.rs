@@ -2,11 +2,18 @@ use rav1e::prelude::*;
 use rgb::RGBA8;
 
 #[derive(Debug, Copy, Clone)]
+pub enum ColorSpace {
+    YCbCr,
+    RGB,
+}
+
+#[derive(Debug, Copy, Clone)]
 pub struct EncConfig {
     pub quality: u8,
     pub alpha_quality: u8,
     pub speed: u8,
     pub premultiplied_alpha: bool,
+    pub color_space: ColorSpace,
 }
 
 pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
@@ -15,13 +22,23 @@ pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], config: &EncCo
     let mut v_plane = Vec::with_capacity(width*height);
     let mut a_plane = Vec::with_capacity(width*height);
     for px in buffer.iter().copied() {
-        let y  = 0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32;
-        let cb = (px.b as f32 - y) * (1./1.8556);
-        let cr = (px.r as f32 - y) * (1./1.5748);
+        let (y,u,v) = match config.color_space {
+            ColorSpace::YCbCr => {
+                let y  = 0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32;
+                let cb = (px.b as f32 - y) * (0.5/(1.-0.0722));
+                let cr = (px.r as f32 - y) * (0.5/(1.-0.2126));
 
-        y_plane.push((y * (235.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8);
-        u_plane.push(((cb + 128.) * (240.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8);
-        v_plane.push(((cr + 128.) * (240.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8);
+                ((y * (235.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8,
+                ((cb + 128.) * (240.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8,
+                ((cr + 128.) * (240.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8)
+            },
+            ColorSpace::RGB => {
+                (px.g, px.b, px.r)
+            },
+        };
+        y_plane.push(y);
+        u_plane.push(u);
+        v_plane.push(v);
         a_plane.push(px.a);
     }
 
@@ -30,14 +47,19 @@ pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], config: &EncCo
     let alpha_quantizer = quality_to_quantizer(config.alpha_quality);
     let use_alpha = a_plane.iter().copied().any(|b| b != 255);
 
+    let (color_pixel_range, matrix_coefficients) = match config.color_space {
+        ColorSpace::YCbCr => (PixelRange::Limited, MatrixCoefficients::BT709),
+        ColorSpace::RGB => (PixelRange::Full, MatrixCoefficients::Identity),
+    };
+
     let color_description = Some(ColorDescription {
         transfer_characteristics: TransferCharacteristics::SRGB,
         color_primaries: ColorPrimaries::BT709, // sRGB-compatible
-        matrix_coefficients: MatrixCoefficients::BT709,
+        matrix_coefficients,
     });
     // Firefox 81 doesn't support Full yet, but doesn't support alpha either
     let (color, alpha) = rayon::join(
-        || encode_to_av1(width, height, &[&y_plane, &u_plane, &v_plane], quantizer, config.speed, PixelRange::Limited, ChromaSampling::Cs444, color_description),
+        || encode_to_av1(width, height, &[&y_plane, &u_plane, &v_plane], quantizer, config.speed, color_pixel_range, ChromaSampling::Cs444, color_description),
         || if use_alpha {
             Some(encode_to_av1(width, height, &[&a_plane], alpha_quantizer, config.speed, PixelRange::Full, ChromaSampling::Cs400, None))
           } else {

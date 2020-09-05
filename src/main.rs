@@ -8,6 +8,8 @@ use std::path::PathBuf;
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 mod av1encoder;
+use av1encoder::*;
+
 mod dirtyalpha;
 use crate::dirtyalpha::cleared_alpha;
 
@@ -24,7 +26,7 @@ fn main() {
 }
 
 fn help() {
-    println!("cavif {} 08.2020 by Kornel Lesiński. https://lib.rs/cavif
+    println!("cavif {} 09.2020 by Kornel Lesiński. https://lib.rs/cavif
 
 Usage:
     cavif [OPTIONS] IMAGES...
@@ -36,6 +38,7 @@ Options:
     -o path       Write output to this path instead of samefile.avif
     --quiet       Don't print anything
     --dirty-alpha Keep RGB colors of fully-transparent pixels
+    --color=mode  ycbcr (default), rgb (not as good as you'd expect)
 ",
         env!("CARGO_PKG_VERSION")
     );
@@ -68,6 +71,11 @@ fn run() -> Result<(), BoxError> {
         return Err("premultiplied alpha option makes dirty alpha impossible".into());
     }
 
+    let color_space = args.opt_value_from_fn::<_, _, String>("--color", |c| match c {
+        "ycbcr" => Ok(ColorSpace::YCbCr),
+        "rgb" => Ok(ColorSpace::RGB),
+        x => Err(format!("bad color type: {}", x)),
+    })?.unwrap_or(ColorSpace::YCbCr);
     let mut files = args.free_os()?;
     files.retain(|path| Path::new(&path).extension().map_or(true, |e| e != "avif"));
 
@@ -107,9 +115,10 @@ fn run() -> Result<(), BoxError> {
             img = cleared_alpha(img);
         }
         let (buffer, width, height) = img.into_contiguous_buf();
-        let (out_data, color_size, alpha_size) = av1encoder::encode_rgba(width, height, &buffer, &av1encoder::EncConfig {
+        let (out_data, color_size, alpha_size) = encode_rgba(width, height, &buffer, &EncConfig {
             quality, speed,
-            alpha_quality, premultiplied_alpha
+            alpha_quality, premultiplied_alpha,
+            color_space,
         })?;
         if !quiet {
             println!("{}: {}KB ({}B color, {}B alpha, {}B HEIF)", out_path.display(), (out_data.len()+999)/1000, color_size, alpha_size, out_data.len() - color_size - alpha_size);
