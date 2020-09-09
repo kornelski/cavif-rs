@@ -1,7 +1,10 @@
 use imgref::ImgVec;
 use rayon::prelude::*;
 use rgb::RGBA8;
+use std::borrow::Cow;
 use std::fs;
+use std::io::Read;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -39,9 +42,16 @@ Options:
     --quiet       Don't print anything
     --dirty-alpha Keep RGB colors of fully-transparent pixels
     --color=mode  ycbcr (default), rgb (not as good as you'd expect)
+
+\"-\" path means input from stdin and output to stdout.
 ",
         env!("CARGO_PKG_VERSION")
     );
+}
+
+enum MaybePath {
+    Stdio,
+    Path(PathBuf),
 }
 
 fn run() -> Result<(), BoxError> {
@@ -58,7 +68,10 @@ fn run() -> Result<(), BoxError> {
     }
 
     let output = args.opt_value_from_os_str(["-o", "--output"], |s| {
-        Ok::<_, std::convert::Infallible>(PathBuf::from(s))
+        Ok::<_, std::convert::Infallible>(match s {
+            s if s == "-" => MaybePath::Stdio,
+            s => MaybePath::Path(PathBuf::from(s)),
+        })
     })?;
     let quality = args.opt_value_from_str(["-Q", "--quality"])?.unwrap_or(80);
     let alpha_quality = ((quality + 100)/2).min(quality + quality/4 + 2);
@@ -84,32 +97,37 @@ fn run() -> Result<(), BoxError> {
         return Err("No PNG/JPEG files specified".into());
     }
 
-    let mut use_dir = output.is_some() && files.len() > 1;
-    if let Some(out) = &output {
-        if out.is_dir() {
-            use_dir = true;
-        }
-        else if use_dir {
-            let _ = fs::create_dir_all(out);
-        }
-    }
+    let use_dir = match output {
+        Some(MaybePath::Path(ref path)) => {
+            if files.len() > 1 {
+                let _ = fs::create_dir_all(path);
+            }
+            files.len() > 1 || path.is_dir()
+        },
+        _ => false,
+    };
 
-    let process = move |path: &Path| -> Result<(), BoxError> {
-        let data = fs::read(&path).map_err(|e| format!("Unable to read input image {}: {}", path.display(), e))?;
+    let process = move |data: Vec<u8>, input_path: MaybePath| -> Result<(), BoxError> {
         let mut img = load_rgba(&data, premultiplied_alpha)?;
         drop(data);
-        let out_path = if let Some(output) = &output {
-            if use_dir {
-                let file = Path::new(path.file_name().unwrap()).with_extension("avif");
-                output.join(file)
-            } else {
-                output.to_owned()
-            }
-        } else {
-            path.with_extension("avif")
+        let out_path = match (&output, input_path) {
+            (None, MaybePath::Path(input)) => MaybePath::Path(input.with_extension("avif")),
+            (Some(MaybePath::Path(output)), MaybePath::Path(ref input)) => MaybePath::Path({
+                if use_dir {
+                    output.join(Path::new(input.file_name().unwrap()).with_extension("avif"))
+                } else {
+                    output.to_owned()
+                }
+            }),
+            (None, MaybePath::Stdio) |
+            (Some(MaybePath::Stdio), _) => MaybePath::Stdio,
+            (Some(MaybePath::Path(output)), MaybePath::Stdio) => MaybePath::Path(output.to_owned()),
         };
-        if !overwrite && out_path.exists() {
-            return Err(format!("{} already exists; skipping", out_path.display()).into());
+        match out_path {
+            MaybePath::Path(ref p) if !overwrite && p.exists() => {
+                return Err(format!("{} already exists; skipping", p.display()).into());
+            },
+            _ => {},
         }
         if !dirty_alpha && !premultiplied_alpha {
             img = cleared_alpha(img);
@@ -120,18 +138,37 @@ fn run() -> Result<(), BoxError> {
             alpha_quality, premultiplied_alpha,
             color_space,
         })?;
-        if !quiet {
-            println!("{}: {}KB ({}B color, {}B alpha, {}B HEIF)", out_path.display(), (out_data.len()+999)/1000, color_size, alpha_size, out_data.len() - color_size - alpha_size);
-        }
-        fs::write(&out_path, out_data).map_err(|e| format!("Unable to write output image {}: {}", out_path.display(), e))?;
+        match out_path {
+            MaybePath::Path(ref p) => {
+                if !quiet {
+                    println!("{}: {}KB ({}B color, {}B alpha, {}B HEIF)", p.display(), (out_data.len()+999)/1000, color_size, alpha_size, out_data.len() - color_size - alpha_size);
+                }
+                fs::write(p, out_data)
+            },
+            MaybePath::Stdio => {
+                std::io::stdout().write_all(&out_data)
+            },
+        }.map_err(|e| format!("Unable to write output image: {}", e))?;
         Ok(())
     };
 
     let failures = files.par_iter().map(|path| {
-        let path = Path::new(&path);
-        process(path).map_err(|e| -> BoxError {
-            format!("{}: error: {}", path.display(), e).into()
-        })
+        let (data, path) = if path == "-" {
+            let mut data = Vec::new();
+            std::io::stdin().read_to_end(&mut data)?;
+            (data, MaybePath::Stdio)
+        } else {
+            let path = PathBuf::from(path);
+            let data = fs::read(&path)
+                .map_err(|e| format!("Unable to read input image {}: {}", path.display(), e))?;
+            (data, MaybePath::Path(path.clone()))
+        };
+        let path_str: Cow<_> = match path {
+            MaybePath::Path(ref p) => p.display().to_string().into(),
+            MaybePath::Stdio => "stdin".into(),
+        };
+        process(data, path)
+            .map_err(|e| BoxError::from(format!("{}: error: {}", path_str, e)))
     })
     .filter_map(|res| res.err())
     .collect::<Vec<BoxError>>();
