@@ -1,27 +1,57 @@
+use imgref::Img;
 use rav1e::prelude::*;
 use rgb::RGBA8;
 
+/// See [`Config`]
 #[derive(Debug, Copy, Clone)]
 pub enum ColorSpace {
     YCbCr,
     RGB,
 }
 
+/// Encoder configuration struct
+///
+/// See [`encode_rgba`](crate::encode_rgba)
 #[derive(Debug, Copy, Clone)]
 pub struct EncConfig {
+    /// 0-100 scale
     pub quality: u8,
+    /// 0-100 scale
     pub alpha_quality: u8,
+    /// rav1e preset 1 (slow) 10 (fast but crappy)
     pub speed: u8,
+    /// True if RGBA input has already been premultiplied. It inserts appropriate metadata. Warning: decoding of this is not supported by libavif yet.
     pub premultiplied_alpha: bool,
+    /// Which pixel format to use in AVIF file. RGB tends to give larger files.
     pub color_space: ColorSpace,
 }
 
-pub fn encode_rgba(width: usize, height: usize, buffer: &[RGBA8], config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
+/// Make a new AVIF image from RGBA pixels
+///
+/// Make the `Img` for the `buffer` like this:
+///
+/// ```rust,ignore
+/// Img::new(&pixels_rgba[..], width, height)
+/// ```
+///
+/// If you have pixels as `u8` slice, then:
+///
+/// ```rust,ignore
+/// use rgb::ComponentSlice;
+/// let pixels_rgba = pixels.as_rgba();
+/// ```
+///
+/// If all pixels are opaque, alpha channel will be left out automatically.
+///
+/// It's highly recommended to apply [`cleared_alpha`](crate::cleared_alpha) first.
+pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
+    let width = buffer.width();
+    let height = buffer.height();
     let mut y_plane = Vec::with_capacity(width*height);
     let mut u_plane = Vec::with_capacity(width*height);
     let mut v_plane = Vec::with_capacity(width*height);
     let mut a_plane = Vec::with_capacity(width*height);
-    for px in buffer.iter().copied() {
+    for px in buffer.pixels() {
         let (y,u,v) = match config.color_space {
             ColorSpace::YCbCr => {
                 let y  = 0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32;

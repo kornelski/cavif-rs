@@ -132,8 +132,7 @@ fn run() -> Result<(), BoxError> {
         if !dirty_alpha && !premultiplied_alpha {
             img = cleared_alpha(img);
         }
-        let (buffer, width, height) = img.into_contiguous_buf();
-        let (out_data, color_size, alpha_size) = encode_rgba(width, height, &buffer, &EncConfig {
+        let (out_data, color_size, alpha_size) = encode_rgba(img.as_ref(), &EncConfig {
             quality, speed,
             alpha_quality, premultiplied_alpha,
             color_space,

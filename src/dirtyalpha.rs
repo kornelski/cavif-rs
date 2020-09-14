@@ -1,5 +1,5 @@
 use imgref::ImgRef;
-use imgref::ImgVec;
+use imgref::Img;
 use rgb::ComponentMap;
 use rgb::RGB;
 use rgb::RGBA8;
@@ -16,7 +16,8 @@ fn weighed_pixel(px: RGBA8) -> (u16, RGB<u32>) {
         px.b as u32 * weight as u32))
 }
 
-pub fn cleared_alpha(mut img: ImgVec<RGBA8>) -> ImgVec<RGBA8> {
+/// Clear/change RGB components of fully-transparent RGBA pixels to make them cheaper to encode with AV1
+pub fn cleared_alpha(mut img: Img<Vec<RGBA8>>) -> Img<Vec<RGBA8>> {
     // get dominant visible transparent color (excluding opaque pixels)
     let mut sum = RGB::new(0,0,0);
     let mut weights = 0;
@@ -46,7 +47,7 @@ pub fn cleared_alpha(mut img: ImgVec<RGBA8>) -> ImgVec<RGBA8> {
 
 /// copy color from opaque pixels to transparent pixels
 /// (so that when edges get crushed by compression, the distortion will be away from visible edge)
-fn bleed_opaque_color(img: ImgRef<RGBA8>) -> ImgVec<RGBA8> {
+fn bleed_opaque_color(img: ImgRef<RGBA8>) -> Img<Vec<RGBA8>> {
     let mut out = Vec::with_capacity(img.width() * img.height());
     loop9::loop9_img(img, |_, _, top, mid, bot| {
         out.push(if mid.curr.a == 255 {
@@ -76,11 +77,11 @@ fn bleed_opaque_color(img: ImgRef<RGBA8>) -> ImgVec<RGBA8> {
             }
         });
     });
-    ImgVec::new(out, img.width(), img.height())
+    Img::new(out, img.width(), img.height())
 }
 
 /// ensure there are no sharp edges created by the cleared alpha
-fn blur_transparent_pixels(img: ImgRef<RGBA8>) -> ImgVec<RGBA8> {
+fn blur_transparent_pixels(img: ImgRef<RGBA8>) -> Img<Vec<RGBA8>> {
     let mut out = Vec::with_capacity(img.width() * img.height());
     loop9::loop9_img(img, |_, _, top, mid, bot| {
         out.push(if mid.curr.a == 255 {
@@ -101,7 +102,7 @@ fn blur_transparent_pixels(img: ImgRef<RGBA8>) -> ImgVec<RGBA8> {
             }
         });
     });
-    ImgVec::new(out, img.width(), img.height())
+    Img::new(out, img.width(), img.height())
 }
 
 #[inline(always)]
