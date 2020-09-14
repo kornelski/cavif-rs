@@ -1,6 +1,5 @@
 use imgref::ImgVec;
 use rayon::prelude::*;
-use rgb::RGBA8;
 use std::borrow::Cow;
 use std::fs;
 use std::io::Read;
@@ -10,11 +9,7 @@ use std::path::PathBuf;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-mod av1encoder;
-use av1encoder::*;
-
-mod dirtyalpha;
-use crate::dirtyalpha::cleared_alpha;
+use ravif::*;
 
 fn main() {
     if let Err(e) = run() {
@@ -132,7 +127,7 @@ fn run() -> Result<(), BoxError> {
         if !dirty_alpha && !premultiplied_alpha {
             img = cleared_alpha(img);
         }
-        let (out_data, color_size, alpha_size) = encode_rgba(img.as_ref(), &EncConfig {
+        let (out_data, color_size, alpha_size) = encode_rgba(img.as_ref(), &Config {
             quality, speed,
             alpha_quality, premultiplied_alpha,
             color_space,
