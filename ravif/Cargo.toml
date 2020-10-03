@@ -21,6 +21,10 @@ rgb = "0.8.25"
 imgref = "1.7.0"
 loop9 = "0.1.3"
 
+[features]
+default = ["asm"]
+asm = ["rav1e/asm"]
+
 [profile.release]
 lto = true
 
