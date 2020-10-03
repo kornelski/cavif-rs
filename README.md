@@ -6,7 +6,16 @@ Encoder/converter for AVIF images. Based on [rav1e](//lib.rs/rav1e) and [avif-se
 
 ➡️ **[Download the latest release](https://github.com/kornelski/cavif/releases)** ⬅️
 
-Alternatively, build it from source. It requires:
+The pre-built zip includes a Debian package and a portable static executable, with no dependencies, that runs on any Linux distro. It also includes executables for macOS and Windows.
+
+## Compatibility
+
+* Chrome 85 desktop and libavif: full support, except the [`--premultiplied-alpha` option](https://github.com/AOMediaCodec/libavif/issues/292).
+* Firefox: only behind a flag, and [doesn't support images with alpha channel yet](https://github.com/mozilla/mp4parse-rust/pull/239).
+
+## Building
+
+To build it from source you need:
 
 * Rust 1.45 or later, preferably via [rustup](//rustup.rs)
 * [`nasm`](https://www.nasm.us/) 2.14 or later
