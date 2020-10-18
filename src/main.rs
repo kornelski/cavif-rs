@@ -1,6 +1,6 @@
+use clap::{Arg, App, AppSettings, value_t};
 use imgref::ImgVec;
 use rayon::prelude::*;
-use std::borrow::Cow;
 use std::fs;
 use std::io::Read;
 use std::io::Write;
@@ -23,72 +23,96 @@ fn main() {
     }
 }
 
-fn help() {
-    println!("cavif {} 09.2020 by Kornel Lesiński. https://lib.rs/cavif
-
-Usage:
-    cavif [OPTIONS] IMAGES...
-
-Options:
-    --quality=n   Quality from 1 (worst) to 100 (best), the default value is 80
-    --speed=n     Encoding speed from 1 (best) to 10 (fast but ugly), the default value is 1
-    --overwrite   Replace files if there's .avif already
-    -o path       Write output to this path instead of samefile.avif
-    --quiet       Don't print anything
-    --dirty-alpha Keep RGB colors of fully-transparent pixels
-    --color=mode  ycbcr (default), rgb (not as good as you'd expect)
-
-\"-\" path means input from stdin and output to stdout.
-",
-        env!("CARGO_PKG_VERSION")
-    );
-}
-
 enum MaybePath {
     Stdio,
     Path(PathBuf),
 }
 
 fn run() -> Result<(), BoxError> {
-    let mut args = pico_args::Arguments::from_env();
+    let args = App::new("cavif-rs")
+        .version(clap::crate_version!())
+        .author("Kornel Lesiński <kornel@imageoptim.com>")
+        .about("Convert JPEG/PNG images to AVIF image format (based on AV1/rav1e)")
+        .setting(AppSettings::DeriveDisplayOrder)
+        .setting(AppSettings::ColorAuto)
+        .setting(AppSettings::UnifiedHelpMessage)
+        .arg(Arg::with_name("quality")
+            .short("Q")
+            .long("quality")
+            .value_name("n")
+            .help("Quality from 1 (worst) to 100 (best)")
+            .default_value("80")
+            .takes_value(true))
+        .arg(Arg::with_name("speed")
+            .short("s")
+            .long("speed")
+            .value_name("n")
+            .default_value("1")
+            .help("Encoding speed from 1 (best) to 10 (fast but ugly)")
+            .takes_value(true))
+        .arg(Arg::with_name("overwrite")
+            .alias("--force")
+            .short("f")
+            .long("overwrite")
+            .help("Replace files if there's .avif already"))
+        .arg(Arg::with_name("output")
+            .short("o")
+            .long("output")
+            .value_name("path")
+            .help("Write output to this path instead of same_file.avif. It may be a file or a directory.")
+            .takes_value(true))
+        .arg(Arg::with_name("quiet")
+            .short("q")
+            .long("quiet")
+            .help("Don't print anything"))
+        .arg(Arg::with_name("dirty-alpha")
+            .long("dirty-alpha")
+            .help("Keep RGB data of fully-transparent pixels (makes larger, lower quality files)"))
+        .arg(Arg::with_name("color")
+            .long("color")
+            .default_value("ycbcr")
+            .takes_value(true)
+            .possible_values(&["ycbcr", "rgb"])
+            .help("Internal AVIF color space"))
+        .arg(Arg::with_name("IMAGES")
+            .index(1)
+            .help("One or more JPEG or PNG files to convert. \"-\" is interpreted as stdin/stdout.")
+            .multiple(true))
+        .get_matches();
 
-    if args.contains("--version") {
-        println!("cavif {}", env!("CARGO_PKG_VERSION"));
-        std::process::exit(0);
-    }
-
-    if args.contains(["-h", "--help"]) {
-        help();
-        std::process::exit(0);
-    }
-
-    let output = args.opt_value_from_os_str(["-o", "--output"], |s| {
-        Ok::<_, std::convert::Infallible>(match s {
+    let output = args.value_of("output").map(|s| {
+        match s {
             s if s == "-" => MaybePath::Stdio,
             s => MaybePath::Path(PathBuf::from(s)),
-        })
-    })?;
-    let quality = args.opt_value_from_str(["-Q", "--quality"])?.unwrap_or(80);
+        }
+    });
+    let quality: u8 = value_t!(args, "quality", u8)?;
     let alpha_quality = ((quality + 100)/2).min(quality + quality/4 + 2);
-    let speed = args.opt_value_from_str(["-s", "--speed"])?.unwrap_or(1);
-    let overwrite = args.contains(["-f", "--overwrite"]);
-    let quiet = args.contains(["-q", "--quiet"]);
-    let premultiplied_alpha = args.contains("--premultiplied-alpha");
-    let dirty_alpha = args.contains("--dirty-alpha");
+    let speed: u8 = value_t!(args, "speed", u8)?;
+    let overwrite = args.is_present("overwrite");
+    let quiet = args.is_present("quiet");
+    let premultiplied_alpha = args.is_present("premultiplied-alpha");
+    let dirty_alpha = args.is_present("dirty-alpha");
     if dirty_alpha && premultiplied_alpha {
         return Err("premultiplied alpha option makes dirty alpha impossible".into());
     }
 
-    let color_space = args.opt_value_from_fn::<_, _, String>("--color", |c| match c {
-        "ycbcr" => Ok(ColorSpace::YCbCr),
-        "rgb" => Ok(ColorSpace::RGB),
-        x => Err(format!("bad color type: {}", x)),
-    })?.unwrap_or(ColorSpace::YCbCr);
-    let mut files = args.free_os()?;
-    files.retain(|path| Path::new(&path).extension().map_or(true, |e| e != "avif"));
+    let color_space = match args.value_of("color").expect("default") {
+        "ycbcr" => ColorSpace::YCbCr,
+        "rgb" => ColorSpace::RGB,
+        x => Err(format!("bad color type: {}", x))?,
+    };
+    let files: Vec<_> = args.values_of_os("IMAGES").expect("clap")
+        .filter(|path| Path::new(&path).extension().map_or(true, |e| e != "avif"))
+        .map(|p| if p == "-" {
+            MaybePath::Stdio
+        } else {
+            MaybePath::Path(PathBuf::from(p))
+        })
+        .collect();
 
     if files.is_empty() {
-        help();
+        args.usage();
         return Err("No PNG/JPEG files specified".into());
     }
 
@@ -102,7 +126,7 @@ fn run() -> Result<(), BoxError> {
         _ => false,
     };
 
-    let process = move |data: Vec<u8>, input_path: MaybePath| -> Result<(), BoxError> {
+    let process = move |data: Vec<u8>, input_path: &MaybePath| -> Result<(), BoxError> {
         let mut img = load_rgba(&data, premultiplied_alpha)?;
         drop(data);
         let out_path = match (&output, input_path) {
@@ -146,22 +170,22 @@ fn run() -> Result<(), BoxError> {
         Ok(())
     };
 
-    let failures = files.par_iter().map(|path| {
-        let (data, path) = if path == "-" {
-            let mut data = Vec::new();
-            std::io::stdin().read_to_end(&mut data)?;
-            (data, MaybePath::Stdio)
-        } else {
-            let path = PathBuf::from(path);
-            let data = fs::read(&path)
-                .map_err(|e| format!("Unable to read input image {}: {}", path.display(), e))?;
-            (data, MaybePath::Path(path.clone()))
+    let failures = files.into_par_iter().map(|path| {
+        let tmp;
+        let (data, path_str): (_, &dyn std::fmt::Display) = match path {
+            MaybePath::Stdio => {
+                let mut data = Vec::new();
+                std::io::stdin().read_to_end(&mut data)?;
+                (data, &"stdin")
+            },
+            MaybePath::Path(ref path) => {
+                let data = fs::read(path)
+                    .map_err(|e| format!("Unable to read input image {}: {}", path.display(), e))?;
+                tmp = path.display();
+                (data, &tmp)
+            },
         };
-        let path_str: Cow<_> = match path {
-            MaybePath::Path(ref p) => p.display().to_string().into(),
-            MaybePath::Stdio => "stdin".into(),
-        };
-        process(data, path)
+        process(data, &path)
             .map_err(|e| BoxError::from(format!("{}: error: {}", path_str, e)))
     })
     .filter_map(|res| res.err())
