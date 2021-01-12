@@ -102,7 +102,7 @@ fn run() -> Result<(), BoxError> {
         "rgb" => ColorSpace::RGB,
         x => Err(format!("bad color type: {}", x))?,
     };
-    let files: Vec<_> = args.values_of_os("IMAGES").expect("clap")
+    let files: Vec<_> = args.values_of_os("IMAGES").ok_or("Please specify image paths to convert")?
         .filter(|path| Path::new(&path).extension().map_or(true, |e| e != "avif"))
         .map(|p| if p == "-" {
             MaybePath::Stdio
