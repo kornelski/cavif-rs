@@ -48,7 +48,14 @@ fn run() -> Result<(), BoxError> {
             .long("speed")
             .value_name("n")
             .default_value("1")
-            .help("Encoding speed from 1 (best) to 10 (fast but ugly)")
+            .help("Encoding speed from 0 (best) to 10 (fast but ugly)")
+            .takes_value(true))
+        .arg(Arg::with_name("threads")
+            .short("j")
+            .long("threads")
+            .value_name("n")
+            .default_value("0")
+            .help("Maximum threads to use (0 = one thread per host core)")
             .takes_value(true))
         .arg(Arg::with_name("overwrite")
             .alias("--force")
@@ -91,6 +98,7 @@ fn run() -> Result<(), BoxError> {
     let speed: u8 = value_t!(args, "speed", u8)?;
     let overwrite = args.is_present("overwrite");
     let quiet = args.is_present("quiet");
+    let threads: usize = value_t!(args, "threads", usize)?;
     let premultiplied_alpha = args.is_present("premultiplied-alpha");
     let dirty_alpha = args.is_present("dirty-alpha");
     if dirty_alpha && premultiplied_alpha {
@@ -154,7 +162,7 @@ fn run() -> Result<(), BoxError> {
         let (out_data, color_size, alpha_size) = encode_rgba(img.as_ref(), &Config {
             quality, speed,
             alpha_quality, premultiplied_alpha,
-            color_space,
+            color_space, threads,
         })?;
         match out_path {
             MaybePath::Path(ref p) => {
