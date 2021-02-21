@@ -24,6 +24,8 @@ pub struct EncConfig {
     pub premultiplied_alpha: bool,
     /// Which pixel format to use in AVIF file. RGB tends to give larger files.
     pub color_space: ColorSpace,
+    /// How many threads should be used (0 = match core count)
+    pub threads: usize,    
 }
 
 /// Make a new AVIF image from RGBA pixels
@@ -89,9 +91,9 @@ pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>
     });
     // Firefox 81 doesn't support Full yet, but doesn't support alpha either
     let (color, alpha) = rayon::join(
-        || encode_to_av1(width, height, &[&y_plane, &u_plane, &v_plane], quantizer, config.speed, color_pixel_range, ChromaSampling::Cs444, color_description),
+        || encode_to_av1(width, height, &[&y_plane, &u_plane, &v_plane], quantizer, config.speed, config.threads, color_pixel_range, ChromaSampling::Cs444, color_description),
         || if use_alpha {
-            Some(encode_to_av1(width, height, &[&a_plane], alpha_quantizer, config.speed, PixelRange::Full, ChromaSampling::Cs400, None))
+            Some(encode_to_av1(width, height, &[&a_plane], alpha_quantizer, config.speed, config.threads, PixelRange::Full, ChromaSampling::Cs400, None))
           } else {
             None
         });
@@ -110,13 +112,14 @@ fn quality_to_quantizer(quality: u8) -> usize {
     ((1.-(quality as f32)/100.) * 255.).round().max(0.).min(255.) as usize
 }
 
-fn encode_to_av1(width: usize, height: usize, planes: &[&[u8]], quantizer: usize, speed: u8, pixel_range: PixelRange, chroma_sampling: ChromaSampling, color_description: Option<ColorDescription>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+fn encode_to_av1(width: usize, height: usize, planes: &[&[u8]], quantizer: usize, speed: u8, threads: usize, pixel_range: PixelRange, chroma_sampling: ChromaSampling, color_description: Option<ColorDescription>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     // AV1 needs all the CPU power you can give it,
     // except when it'd create inefficiently tiny tiles
-    let tiles = num_cpus::get().min((width * height) / (128 * 128));
+    let cpus = if threads > 0 { threads } else { num_cpus::get() };
+    let tiles = cpus.min((width * height) / (128 * 128));
 
     let cfg = Config::new()
-        .with_threads(num_cpus::get())
+        .with_threads(cpus.into())
         .with_encoder_config(EncoderConfig {
         width,
         height,
