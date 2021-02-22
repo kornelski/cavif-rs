@@ -41,7 +41,7 @@ cavif [OPTIONS] IMAGES...
  * `--overwrite` — Replace files if there's .avif already. By default existing files are left untouched.
  * `-o path` — Write output to this path instead of samefile.avif. If multiple input files are specified, it's interpreted as a directory.
  * `--quiet` — Don't print anything during conversion.
- * `--premultiplied-alpha` — Warning: [currently incompatible with libavif](https://github.com/AOMediaCodec/libavif/issues/292). Improves compression of transparent images by clearing RGB of fully transparent pixels and lowering quality of semi-transparent colors.
+ * `--premultiplied-alpha` — May improve compression of transparent images by lowering quality of semi-transparent colors. Warning: new feature, may not be compatible with all decoders yet.
  * `--dirty-alpha` — Don't change RGB values of transparent pixels. By default irrelevant color of transparent pixels is cleared to avoid wasting space.
  * `--color=rgb` — encode using RGB color space instead of YCbCr color space. Makes color closer to lossless, but makes files larger.
 
