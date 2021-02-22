@@ -11,7 +11,7 @@ The pre-built zip includes a portable static executable, with no dependencies, t
 ## Compatibility
 
 * Chrome 85 desktop and libavif: full support, except the [`--premultiplied-alpha` option](https://github.com/AOMediaCodec/libavif/issues/292).
-* Firefox 86: only behind a flag, and doesn't support images with alpha channel yet.
+* Firefox 86: not compatible with images with alpha channel yet.
 
 ## Running
 
