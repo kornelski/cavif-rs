@@ -110,8 +110,22 @@ fn run() -> Result<(), BoxError> {
         "rgb" => ColorSpace::RGB,
         x => Err(format!("bad color type: {}", x))?,
     };
-    let files: Vec<_> = args.values_of_os("IMAGES").ok_or("Please specify image paths to convert")?
-        .filter(|path| Path::new(&path).extension().map_or(true, |e| e != "avif"))
+    let files = args.values_of_os("IMAGES").ok_or("Please specify image paths to convert")?;
+    let files: Vec<_> = files
+        .filter(|pathstr| {
+            let path = Path::new(&pathstr);
+            if let Some(s) = path.to_str() {
+                if quiet && s.parse::<u8>().is_ok() && !path.exists() {
+                    eprintln!("warning: -q is not for quality, so '{s}' is misinterpreted as a file. Use -Q {s}", s = s);
+                }
+            }
+            path.extension().map_or(true, |e| if e == "avif" {
+                if !quiet { eprintln!("warning: ignoring {}", path.display()); }
+                false
+            } else {
+                true
+            })
+        })
         .map(|p| if p == "-" {
             MaybePath::Stdio
         } else {
