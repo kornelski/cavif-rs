@@ -27,7 +27,13 @@ clap = { version = "2.33.3", default-features = false, features = ["color", "sug
 default = ["asm"]
 asm = ["ravif/asm"]
 
+[profile.dev]
+opt-level = 1
+debug = 1
+
 [profile.release]
+opt-level = 3
+debug = false
 lto = true
 
 [profile.dev.package."*"]

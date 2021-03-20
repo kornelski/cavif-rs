@@ -1,5 +1,5 @@
-use imgref::ImgRef;
 use imgref::Img;
+use imgref::ImgRef;
 use rgb::ComponentMap;
 use rgb::RGB;
 use rgb::RGBA8;
@@ -19,7 +19,7 @@ fn weighed_pixel(px: RGBA8) -> (u16, RGB<u32>) {
 /// Clear/change RGB components of fully-transparent RGBA pixels to make them cheaper to encode with AV1
 pub fn cleared_alpha(mut img: Img<Vec<RGBA8>>) -> Img<Vec<RGBA8>> {
     // get dominant visible transparent color (excluding opaque pixels)
-    let mut sum = RGB::new(0,0,0);
+    let mut sum = RGB::new(0, 0, 0);
     let mut weights = 0;
 
     // Only consider colors around transparent images

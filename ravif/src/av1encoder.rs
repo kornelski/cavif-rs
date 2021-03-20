@@ -1,5 +1,6 @@
 use imgref::Img;
 use rav1e::prelude::*;
+use rgb::RGB8;
 use rgb::RGBA8;
 
 /// See [`Config`]
@@ -20,15 +21,15 @@ pub struct EncConfig {
     pub alpha_quality: u8,
     /// rav1e preset 1 (slow) 10 (fast but crappy)
     pub speed: u8,
-    /// True if RGBA input has already been premultiplied. It inserts appropriate metadata. Warning: decoding of this is not supported by libavif yet.
+    /// True if RGBA input has already been premultiplied. It inserts appropriate metadata.
     pub premultiplied_alpha: bool,
     /// Which pixel format to use in AVIF file. RGB tends to give larger files.
     pub color_space: ColorSpace,
     /// How many threads should be used (0 = match core count)
-    pub threads: usize,    
+    pub threads: usize,
 }
 
-/// Make a new AVIF image from RGBA pixels
+/// Make a new AVIF image from RGBA pixels (non-premultiplied, alpha last)
 ///
 /// Make the `Img` for the `buffer` like this:
 ///
@@ -36,16 +37,18 @@ pub struct EncConfig {
 /// Img::new(&pixels_rgba[..], width, height)
 /// ```
 ///
-/// If you have pixels as `u8` slice, then:
+/// If you have pixels as `u8` slice, then first do:
 ///
 /// ```rust,ignore
 /// use rgb::ComponentSlice;
-/// let pixels_rgba = pixels.as_rgba();
+/// let pixels_rgba = pixels_u8.as_rgba();
 /// ```
 ///
 /// If all pixels are opaque, alpha channel will be left out automatically.
 ///
 /// It's highly recommended to apply [`cleared_alpha`](crate::cleared_alpha) first.
+///
+/// returns AVIF file, size of color metadata, size of alpha metadata overhead
 pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
     let width = buffer.width();
     let height = buffer.height();
@@ -74,14 +77,80 @@ pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>
         a_plane.push(px.a);
     }
 
+    let use_alpha = a_plane.iter().copied().any(|b| b != 255);
+
+    let color_pixel_range = match config.color_space {
+        ColorSpace::YCbCr => PixelRange::Limited,
+        ColorSpace::RGB => PixelRange::Full,
+    };
+
+    encode_raw_planes(width, height, &y_plane, &u_plane, &v_plane, if use_alpha { Some(&a_plane) } else { None }, color_pixel_range, config)
+}
+
+/// Make a new AVIF image from RGB pixels
+///
+/// Make the `Img` for the `buffer` like this:
+///
+/// ```rust,ignore
+/// Img::new(&pixels_rgb[..], width, height)
+/// ```
+///
+/// If you have pixels as `u8` slice, then first do:
+///
+/// ```rust,ignore
+/// use rgb::ComponentSlice;
+/// let pixels_rgba = pixels_u8.as_rgb();
+/// ```
+///
+/// returns AVIF file, size of color metadata
+pub fn encode_rgb(buffer: Img<&[RGB8]>, config: &EncConfig) -> Result<(Vec<u8>, usize), Box<dyn std::error::Error + Send + Sync>> {
+    let width = buffer.width();
+    let height = buffer.height();
+    let mut y_plane = Vec::with_capacity(width*height);
+    let mut u_plane = Vec::with_capacity(width*height);
+    let mut v_plane = Vec::with_capacity(width*height);
+    for px in buffer.pixels() {
+        let (y,u,v) = match config.color_space {
+            ColorSpace::YCbCr => {
+                let y  = 0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32;
+                let cb = (px.b as f32 - y) * (0.5/(1.-0.0722));
+                let cr = (px.r as f32 - y) * (0.5/(1.-0.2126));
+
+                ((y * (235.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8,
+                ((cb + 128.) * (240.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8,
+                ((cr + 128.) * (240.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8)
+            },
+            ColorSpace::RGB => {
+                (px.g, px.b, px.r)
+            },
+        };
+        y_plane.push(y);
+        u_plane.push(u);
+        v_plane.push(v);
+    }
+
+    let color_pixel_range = match config.color_space {
+        ColorSpace::YCbCr => PixelRange::Limited,
+        ColorSpace::RGB => PixelRange::Full,
+    };
+
+    let (avif, heif_bloat, _) = encode_raw_planes(width, height, &y_plane, &u_plane, &v_plane, None, color_pixel_range, config)?;
+    Ok((avif, heif_bloat))
+}
+
+/// If config.color_space is ColorSpace::YCbCr, then it takes 8-bit BT709 color space.
+///
+/// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
+///
+/// returns AVIF file, size of color metadata, size of alpha metadata overhead
+pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &[u8], v_plane: &[u8], a_plane: Option<&[u8]>, color_pixel_range: PixelRange, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
     // quality setting
     let quantizer = quality_to_quantizer(config.quality);
     let alpha_quantizer = quality_to_quantizer(config.alpha_quality);
-    let use_alpha = a_plane.iter().copied().any(|b| b != 255);
 
-    let (color_pixel_range, matrix_coefficients) = match config.color_space {
-        ColorSpace::YCbCr => (PixelRange::Limited, MatrixCoefficients::BT709),
-        ColorSpace::RGB => (PixelRange::Full, MatrixCoefficients::Identity),
+    let matrix_coefficients = match config.color_space {
+        ColorSpace::YCbCr => MatrixCoefficients::BT709,
+        ColorSpace::RGB => MatrixCoefficients::Identity,
     };
 
     let color_description = Some(ColorDescription {
@@ -92,7 +161,7 @@ pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>
     // Firefox 81 doesn't support Full yet, but doesn't support alpha either
     let (color, alpha) = rayon::join(
         || encode_to_av1(width, height, &[&y_plane, &u_plane, &v_plane], quantizer, config.speed, config.threads, color_pixel_range, ChromaSampling::Cs444, color_description),
-        || if use_alpha {
+        || if let Some(a_plane) = a_plane {
             Some(encode_to_av1(width, height, &[&a_plane], alpha_quantizer, config.speed, config.threads, PixelRange::Full, ChromaSampling::Cs400, None))
           } else {
             None
