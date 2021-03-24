@@ -13,7 +13,7 @@ repository = "https://github.com/kornelski/cavif-rs"
 include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
 
 [dependencies]
-ravif = { version = "0.6.5", path = "./ravif", default-features = false }
+ravif = { version = "0.7", path = "./ravif", default-features = false }
 lodepng = "3.4.5"
 num_cpus = "1.13.0"
 rayon = "1.5.0"
