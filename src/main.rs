@@ -40,7 +40,7 @@ fn run() -> Result<(), BoxError> {
             .short("Q")
             .long("quality")
             .value_name("n")
-            .help("Quality from 1 (worst) to 100 (best)")
+            .help("Quality from 1 (worst) to 100 (best). NB! Not the same scale as JPEG quality")
             .default_value("80")
             .takes_value(true))
         .arg(Arg::with_name("speed")
@@ -93,8 +93,8 @@ fn run() -> Result<(), BoxError> {
             s => MaybePath::Path(PathBuf::from(s)),
         }
     });
-    let quality: u8 = value_t!(args, "quality", u8)?;
-    let alpha_quality = ((quality + 100)/2).min(quality + quality/4 + 2);
+    let quality = value_t!(args, "quality", f32)?;
+    let alpha_quality = ((quality + 100.)/2.).min(quality + quality/4. + 2.);
     let speed: u8 = value_t!(args, "speed", u8)?;
     let overwrite = args.is_present("overwrite");
     let quiet = args.is_present("quiet");

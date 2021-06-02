@@ -16,9 +16,9 @@ pub enum ColorSpace {
 #[derive(Debug, Copy, Clone)]
 pub struct EncConfig {
     /// 0-100 scale
-    pub quality: u8,
+    pub quality: f32,
     /// 0-100 scale
-    pub alpha_quality: u8,
+    pub alpha_quality: f32,
     /// rav1e preset 1 (slow) 10 (fast but crappy)
     pub speed: u8,
     /// True if RGBA input has already been premultiplied. It inserts appropriate metadata.
@@ -177,8 +177,8 @@ pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &
     Ok((out, color_size, alpha_size))
 }
 
-fn quality_to_quantizer(quality: u8) -> usize {
-    ((1.-(quality as f32)/100.) * 255.).round().max(0.).min(255.) as usize
+fn quality_to_quantizer(quality: f32) -> usize {
+    ((1.-quality/100.) * 255.).round().max(0.).min(255.) as usize
 }
 
 fn encode_to_av1(width: usize, height: usize, planes: &[&[u8]], quantizer: usize, speed: u8, threads: usize, pixel_range: PixelRange, chroma_sampling: ChromaSampling, color_description: Option<ColorDescription>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
