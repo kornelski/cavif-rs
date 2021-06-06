@@ -50,7 +50,7 @@ cavif [OPTIONS] IMAGES...
 
 To build it from source you need:
 
-* Rust 1.48 or later, preferably via [rustup](//rustup.rs)
+* Rust 1.51 or later, preferably via [rustup](//rustup.rs)
 * [`nasm`](https://www.nasm.us/) 2.14 or later
 
 Then run in a terminal:
