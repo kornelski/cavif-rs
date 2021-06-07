@@ -158,11 +158,34 @@ pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &
         color_primaries: ColorPrimaries::BT709, // sRGB-compatible
         matrix_coefficients,
     });
+
+    let threads = if config.threads > 0 { config.threads } else { num_cpus::get() };
+
     // Firefox 81 doesn't support Full yet, but doesn't support alpha either
     let (color, alpha) = rayon::join(
-        || encode_to_av1(width, height, &[&y_plane, &u_plane, &v_plane], quantizer, config.speed, config.threads, color_pixel_range, ChromaSampling::Cs444, color_description),
+        || encode_to_av1(&Av1EncodeConfig {
+                width,
+                height,
+                planes: &[&y_plane, &u_plane, &v_plane],
+                quantizer,
+                speed: config.speed,
+                threads,
+                pixel_range: color_pixel_range,
+                chroma_sampling: ChromaSampling::Cs444,
+                color_description,
+            }),
         || if let Some(a_plane) = a_plane {
-            Some(encode_to_av1(width, height, &[&a_plane], alpha_quantizer, config.speed, config.threads, PixelRange::Full, ChromaSampling::Cs400, None))
+            Some(encode_to_av1(&Av1EncodeConfig {
+                width,
+                height,
+                planes: &[&a_plane],
+                quantizer: alpha_quantizer,
+                speed: config.speed,
+                threads,
+                pixel_range: PixelRange::Full,
+                chroma_sampling: ChromaSampling::Cs400,
+                color_description: None,
+            }))
           } else {
             None
         });
@@ -181,28 +204,41 @@ fn quality_to_quantizer(quality: f32) -> usize {
     ((1.-quality/100.) * 255.).round().max(0.).min(255.) as usize
 }
 
-fn encode_to_av1(width: usize, height: usize, planes: &[&[u8]], quantizer: usize, speed: u8, threads: usize, pixel_range: PixelRange, chroma_sampling: ChromaSampling, color_description: Option<ColorDescription>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+
+pub(crate) struct Av1EncodeConfig<'a> {
+    pub width: usize,
+    pub height: usize,
+    pub planes: &'a [&'a [u8]],
+    pub quantizer: usize,
+    pub speed: u8,
+    pub threads: usize,
+    pub pixel_range: PixelRange,
+    pub chroma_sampling: ChromaSampling,
+    pub color_description: Option<ColorDescription>,
+}
+
+fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     // AV1 needs all the CPU power you can give it,
     // except when it'd create inefficiently tiny tiles
-    let cpus = if threads > 0 { threads } else { num_cpus::get() };
-    let tiles = cpus.min((width * height) / (128 * 128));
+    let tiles = p.threads.min((p.width * p.height) / (128 * 128));
+    let bit_depth = 8;
 
     let cfg = Config::new()
-        .with_threads(cpus.into())
+        .with_threads(p.threads.into())
         .with_encoder_config(EncoderConfig {
-        width,
-        height,
+        width: p.width,
+        height: p.height,
         time_base: Rational::new(1, 1),
         sample_aspect_ratio: Rational::new(1, 1),
-        bit_depth: 8,
-        chroma_sampling,
-        chroma_sample_position: if chroma_sampling == ChromaSampling::Cs400 {
+        bit_depth,
+        chroma_sampling: p.chroma_sampling,
+        chroma_sample_position: if p.chroma_sampling == ChromaSampling::Cs400 {
             ChromaSamplePosition::Unknown
         } else {
             ChromaSamplePosition::Colocated
         },
-        pixel_range,
-        color_description,
+        pixel_range: p.pixel_range,
+        color_description: p.color_description,
         mastering_display: None,
         content_light: None,
         enable_timing_info: false,
@@ -213,22 +249,22 @@ fn encode_to_av1(width: usize, height: usize, planes: &[&[u8]], quantizer: usize
         max_key_frame_interval: 0,
         reservoir_frame_delay: None,
         low_latency: false,
-        quantizer,
-        min_quantizer: quantizer as _,
+        quantizer: p.quantizer,
+        min_quantizer: p.quantizer as _,
         bitrate: 0,
         tune: Tune::Psychovisual,
         tile_cols: 0,
         tile_rows: 0,
         tiles,
         rdo_lookahead_frames: 1,
-        speed_settings: SpeedSettings::from_preset(speed.into()),
+        speed_settings: SpeedSettings::from_preset(p.speed.into()),
     });
 
     let mut ctx: Context<u8> = cfg.new_context()?;
     let mut frame = ctx.new_frame();
 
-    for (dst, src) in frame.planes.iter_mut().zip(planes) {
-        dst.copy_from_raw_u8(src, width, 1);
+    for (dst, src) in frame.planes.iter_mut().zip(p.planes) {
+        dst.copy_from_raw_u8(src, p.width, (bit_depth+7)/8);
     }
 
     ctx.send_frame(frame)?;
