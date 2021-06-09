@@ -59,13 +59,11 @@ pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>
     for px in buffer.pixels() {
         let (y,u,v) = match config.color_space {
             ColorSpace::YCbCr => {
-                let y  = 0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32;
+                let y  = (0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32).round();
                 let cb = (px.b as f32 - y) * (0.5/(1.-0.0722));
                 let cr = (px.r as f32 - y) * (0.5/(1.-0.2126));
 
-                ((y * (235.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8,
-                ((cb + 128.) * (240.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8,
-                ((cr + 128.) * (240.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8)
+                (y as u8, (cb + 128.).round() as u8, (cr + 128.).round() as u8)
             },
             ColorSpace::RGB => {
                 (px.g, px.b, px.r)
@@ -78,11 +76,7 @@ pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>
     }
 
     let use_alpha = a_plane.iter().copied().any(|b| b != 255);
-
-    let color_pixel_range = match config.color_space {
-        ColorSpace::YCbCr => PixelRange::Limited,
-        ColorSpace::RGB => PixelRange::Full,
-    };
+    let color_pixel_range = PixelRange::Full;
 
     encode_raw_planes(width, height, &y_plane, &u_plane, &v_plane, if use_alpha { Some(&a_plane) } else { None }, color_pixel_range, config)
 }
@@ -112,13 +106,11 @@ pub fn encode_rgb(buffer: Img<&[RGB8]>, config: &EncConfig) -> Result<(Vec<u8>, 
     for px in buffer.pixels() {
         let (y,u,v) = match config.color_space {
             ColorSpace::YCbCr => {
-                let y  = 0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32;
+                let y  = (0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32).round();
                 let cb = (px.b as f32 - y) * (0.5/(1.-0.0722));
                 let cr = (px.r as f32 - y) * (0.5/(1.-0.2126));
 
-                ((y * (235.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8,
-                ((cb + 128.) * (240.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8,
-                ((cr + 128.) * (240.-16.)/255. + 16_f32).round().max(0.).min(255.) as u8)
+                (y as u8, (cb + 128.).round() as u8, (cr + 128.).round() as u8)
             },
             ColorSpace::RGB => {
                 (px.g, px.b, px.r)
@@ -129,10 +121,7 @@ pub fn encode_rgb(buffer: Img<&[RGB8]>, config: &EncConfig) -> Result<(Vec<u8>, 
         v_plane.push(v);
     }
 
-    let color_pixel_range = match config.color_space {
-        ColorSpace::YCbCr => PixelRange::Limited,
-        ColorSpace::RGB => PixelRange::Full,
-    };
+    let color_pixel_range = PixelRange::Full;
 
     let (avif, heif_bloat, _) = encode_raw_planes(width, height, &y_plane, &u_plane, &v_plane, None, color_pixel_range, config)?;
     Ok((avif, heif_bloat))
