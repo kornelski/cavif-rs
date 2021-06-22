@@ -37,21 +37,24 @@ cavif [OPTIONS] IMAGES...
 ```
 
  * `--quality=n` — Quality from 1 (worst) to 100 (best), the default value is 80. The numbers have different meaning than JPEG's quality scale. [Beware when comparing codecs](https://kornel.ski/faircomparison). There is no lossless compression support.
- * `--overwrite` — Replace files if there's .avif already. By default existing files are left untouched.
- * `-o path` — Write output to this path instead of samefile.avif. If multiple input files are specified, it's interpreted as a directory.
  * `--speed=n` — Encoding speed between 1 (best, but slowest) and 10 (fastest, but a blurry mess), the default value is 4. Speeds 1 and 2 are unbelievably slow, but make files ~3-5% smaller. Speeds 7 and above degrade compression significantly, and are not recommended.
+ * `--overwrite` — Replace files if there's `.avif` already. By default the existing files are left untouched.
+ * `-o path` — Write images to this path (instead of `same-name.avif`). If multiple input files are specified, it's interpreted as a directory.
  * `--quiet` — Don't print anything during conversion.
- * `--premultiplied-alpha` — May improve compression of transparent images by lowering quality of semi-transparent colors. Warning: new feature, may not be compatible with all decoders yet.
- * `--dirty-alpha` — Don't change RGB values of transparent pixels. By default irrelevant color of transparent pixels is cleared to avoid wasting space.
- * `--color=rgb` — encode using RGB color space instead of YCbCr color space. Makes color closer to lossless, but makes files larger.
+
+There are additional options that tweak AVIF color space. The defaults in `cavif` are chosen to be the best, so use these options only when you know it's necessary:
+
+ * `--premultiplied-alpha` — Alternative compression mode that lowers quality of semi-transparent colors. Warning: at low qualities it may create black artifacts in transparent areas.
+ * `--dirty-alpha` — Preserve RGB values of fully transparent pixels. By default irrelevant color of transparent pixels is cleared to avoid wasting space.
+ * `--color=rgb` — Encode using RGB instead of YCbCr color space. Makes colors closer to lossless, but makes files larger. Use only if you need to avoid even smallest color shifts.
 
 
 ## Building
 
 To build it from source you need:
 
-* Rust 1.51 or later, preferably via [rustup](//rustup.rs)
-* [`nasm`](https://www.nasm.us/) 2.14 or later
+* Rust 1.52 or later, preferably via [rustup](https://rustup.rs),
+* [`nasm`](https://www.nasm.us/) 2.14 or later.
 
 Then run in a terminal:
 
