@@ -47,7 +47,7 @@ fn run() -> Result<(), BoxError> {
             .short("s")
             .long("speed")
             .value_name("n")
-            .default_value("1")
+            .default_value("4")
             .help("Encoding speed from 0 (best) to 10 (fast but ugly)")
             .takes_value(true))
         .arg(Arg::with_name("threads")

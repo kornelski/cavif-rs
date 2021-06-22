@@ -157,7 +157,7 @@ pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &
                 height,
                 planes: &[&y_plane, &u_plane, &v_plane],
                 quantizer,
-                speed: config.speed,
+                speed: SpeedTweaks::from_my_preset(config.speed, config.quality as _),
                 threads,
                 pixel_range: color_pixel_range,
                 chroma_sampling: ChromaSampling::Cs444,
@@ -169,7 +169,7 @@ pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &
                 height,
                 planes: &[&a_plane],
                 quantizer: alpha_quantizer,
-                speed: config.speed,
+                speed: SpeedTweaks::from_my_preset(config.speed, config.alpha_quality as _),
                 threads,
                 pixel_range: PixelRange::Full,
                 chroma_sampling: ChromaSampling::Cs400,
@@ -194,12 +194,131 @@ fn quality_to_quantizer(quality: f32) -> usize {
 }
 
 
+#[derive(Debug, Copy, Clone)]
+pub struct SpeedTweaks {
+    pub speed_preset: u8,
+
+    pub fast_deblock: Option<bool>,
+    pub reduced_tx_set: Option<bool>,
+    pub tx_domain_distortion: Option<bool>,
+    pub tx_domain_rate: Option<bool>,
+    pub encode_bottomup: Option<bool>,
+    pub rdo_tx_decision: Option<bool>,
+    pub cdef: Option<bool>,
+    /// loop restoration filter
+    pub lrf: Option<bool>,
+    pub non_square_partition: Option<bool>,
+    pub sgr_complexity_full: Option<bool>,
+    pub use_satd_subpel: Option<bool>,
+    pub inter_tx_split: Option<bool>,
+    pub fine_directional_intra: Option<bool>,
+    pub complex_prediction_modes: Option<bool>,
+    pub partition_range: Option<(u8, u8)>,
+    pub min_tile_size: u16,
+}
+
+impl SpeedTweaks {
+    pub fn from_my_preset(speed: u8, quality: u8) -> Self {
+        let low_quality = quality < 60;
+
+        Self {
+            speed_preset: speed,
+
+            partition_range: Some(match speed {
+                0 => (4, 64),
+                1 if low_quality => (4, 64),
+                2 if low_quality => (4, 32),
+                1..=4 => (4, 16),
+                5..=8 => (8, 16),
+                _ => (16, 16),
+            }),
+
+            complex_prediction_modes: Some(speed <= 1), // 2x-3x slower, 2% better
+            sgr_complexity_full: Some(speed <= 2), // 15% slower, barely improves anything -/+1%
+
+            encode_bottomup: Some(speed <= 2), // may be costly (+60%), may even backfire
+
+            // big blocks disabled at 3
+            non_square_partition: Some(speed <= 3), // doesn't seem to do anything?
+
+            // these two are together?
+            rdo_tx_decision: Some(speed <= 4),
+            reduced_tx_set: Some(speed == 4 || speed >= 9), // It interacts with tx_domain_distortion too?
+
+            // 4px blocks disabled at 5
+
+            fine_directional_intra: Some(speed <= 6),
+            fast_deblock: Some(speed >= 7), // mixed bag?
+
+            // 8px blocks disabled at 8
+            lrf: Some(low_quality && speed <= 8), // hardly any help for hi-q images. recovers some q at low quality
+            cdef: Some(low_quality && speed <= 9), // hardly any help for hi-q images. recovers some q at low quality
+
+            inter_tx_split: Some(speed >= 9), // mixed bag even when it works, and it backfires if not used together with reduced_tx_set
+            tx_domain_rate: Some(speed >= 10), // 20% faster, but also 10% larger files!
+
+            tx_domain_distortion: None, // very mixed bag, sometimes helps speed sometimes it doesn't
+            use_satd_subpel: Some(false), // doesn't make sense
+            min_tile_size: match speed {
+                0 => 4096,
+                1 => 2048,
+                2 => 1024,
+                3 => 512,
+                4 => 256,
+                _ => 128,
+            },
+        }
+    }
+
+    pub(crate) fn speed_settings(&self) -> SpeedSettings {
+
+        let mut speed_settings = SpeedSettings::from_preset(self.speed_preset.into());
+
+        speed_settings.multiref = false;
+        speed_settings.fast_scene_detection = true;
+        speed_settings.no_scene_detection = true;
+        speed_settings.include_near_mvs = false;
+
+        if let Some(v) = self.fast_deblock { speed_settings.fast_deblock = v; }
+        if let Some(v) = self.reduced_tx_set { speed_settings.reduced_tx_set = v; }
+        if let Some(v) = self.tx_domain_distortion { speed_settings.tx_domain_distortion = v; }
+        if let Some(v) = self.tx_domain_rate { speed_settings.tx_domain_rate = v; }
+        if let Some(v) = self.encode_bottomup { speed_settings.encode_bottomup = v; }
+        if let Some(v) = self.rdo_tx_decision { speed_settings.rdo_tx_decision = v; }
+        if let Some(v) = self.cdef { speed_settings.cdef = v; }
+        if let Some(v) = self.lrf { speed_settings.lrf = v; }
+        if let Some(v) = self.inter_tx_split { speed_settings.enable_inter_tx_split = v; }
+        if let Some(v) = self.non_square_partition { speed_settings.non_square_partition = v; }
+        if let Some(v) = self.sgr_complexity_full { speed_settings.sgr_complexity = if v { SGRComplexityLevel::Full } else { SGRComplexityLevel::Reduced } };
+        if let Some(v) = self.use_satd_subpel { speed_settings.use_satd_subpel = v; }
+        if let Some(v) = self.fine_directional_intra { speed_settings.fine_directional_intra = v; }
+        if let Some(v) = self.complex_prediction_modes { speed_settings.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple} };
+        if let Some((min, max)) = self.partition_range {
+            assert!(min <= max);
+            fn sz(s: u8) -> BlockSize {
+                match s {
+                    4 => BlockSize::BLOCK_4X4,
+                    8 => BlockSize::BLOCK_8X8,
+                    16 => BlockSize::BLOCK_16X16,
+                    32 => BlockSize::BLOCK_32X32,
+                    64 => BlockSize::BLOCK_64X64,
+                    128 => BlockSize::BLOCK_128X128,
+                    _ => panic!("bad size {}", s),
+                }
+            }
+            speed_settings.partition_range = PartitionRange::new(sz(min), sz(max));
+        }
+
+        speed_settings
+    }
+}
+
 pub(crate) struct Av1EncodeConfig<'a> {
     pub width: usize,
     pub height: usize,
     pub planes: &'a [&'a [u8]],
     pub quantizer: usize,
-    pub speed: u8,
+    pub speed: SpeedTweaks,
     pub threads: usize,
     pub pixel_range: PixelRange,
     pub chroma_sampling: ChromaSampling,
@@ -209,9 +328,10 @@ pub(crate) struct Av1EncodeConfig<'a> {
 fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     // AV1 needs all the CPU power you can give it,
     // except when it'd create inefficiently tiny tiles
-    let tiles = p.threads.min((p.width * p.height) / (128 * 128));
+    let tiles = p.threads.min((p.width * p.height) / (p.speed.min_tile_size as usize).pow(2));
     let bit_depth = 8;
 
+    let speed_settings = p.speed.speed_settings();
     let cfg = Config::new()
         .with_threads(p.threads.into())
         .with_encoder_config(EncoderConfig {
@@ -246,7 +366,7 @@ fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Box<dyn std::error:
         tile_rows: 0,
         tiles,
         rdo_lookahead_frames: 1,
-        speed_settings: SpeedSettings::from_preset(p.speed.into()),
+        speed_settings,
     });
 
     let mut ctx: Context<u8> = cfg.new_context()?;
