@@ -52,6 +52,9 @@ pub struct EncConfig {
 pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
     let width = buffer.width();
     let height = buffer.height();
+    if buffer.buf().len() < width * height {
+        return Err("Too few pixels".into());
+    }
     let mut y_plane = Vec::with_capacity(width*height);
     let mut u_plane = Vec::with_capacity(width*height);
     let mut v_plane = Vec::with_capacity(width*height);
@@ -100,6 +103,9 @@ pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>
 pub fn encode_rgb(buffer: Img<&[RGB8]>, config: &EncConfig) -> Result<(Vec<u8>, usize), Box<dyn std::error::Error + Send + Sync>> {
     let width = buffer.width();
     let height = buffer.height();
+    if buffer.buf().len() < width * height {
+        return Err("Too few pixels".into());
+    }
     let mut y_plane = Vec::with_capacity(width*height);
     let mut u_plane = Vec::with_capacity(width*height);
     let mut v_plane = Vec::with_capacity(width*height);
@@ -133,6 +139,10 @@ pub fn encode_rgb(buffer: Img<&[RGB8]>, config: &EncConfig) -> Result<(Vec<u8>, 
 ///
 /// returns AVIF file, size of color metadata, size of alpha metadata overhead
 pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &[u8], v_plane: &[u8], a_plane: Option<&[u8]>, color_pixel_range: PixelRange, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
+    if y_plane.len() < width * height {
+        return Err("Too few pixels".into());
+    }
+
     // quality setting
     let quantizer = quality_to_quantizer(config.quality);
     let alpha_quantizer = quality_to_quantizer(config.alpha_quality);
