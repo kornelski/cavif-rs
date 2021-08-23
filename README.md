@@ -10,9 +10,9 @@ The pre-built zip includes a portable static executable, with no dependencies, t
 
 ## Compatibility
 
-* Chrome 85 desktop,
+* Chrome 85+ desktop,
 * Chrome on Android 12,
-* Firefox 91.
+* Firefox 91. Currently Firefox 92 is not supported.
 
 ## Running
 
