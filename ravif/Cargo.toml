@@ -14,7 +14,7 @@ include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
 resolver = "2"
 
 [dependencies]
-avif-serialize = "0.7.2"
+avif-serialize = "0.7.4"
 num_cpus = "1.13.0"
 rav1e = { version = "0.5.0-beta", default-features = false }
 rayon = "1.5.1"
