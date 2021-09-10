@@ -351,11 +351,7 @@ fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Box<dyn std::error:
         sample_aspect_ratio: Rational::new(1, 1),
         bit_depth,
         chroma_sampling: p.chroma_sampling,
-        chroma_sample_position: if p.chroma_sampling == ChromaSampling::Cs420 {
-            ChromaSamplePosition::Colocated
-        } else {
-            ChromaSamplePosition::Unknown
-        },
+        chroma_sample_position: ChromaSamplePosition::Unknown,
         pixel_range: p.pixel_range,
         color_description: p.color_description,
         mastering_display: None,
