@@ -62,11 +62,11 @@ pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>
     for px in buffer.pixels() {
         let (y,u,v) = match config.color_space {
             ColorSpace::YCbCr => {
-                let y  = (0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32).round();
+                let y  = 0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32;
                 let cb = (px.b as f32 - y) * (0.5/(1.-0.0722));
                 let cr = (px.r as f32 - y) * (0.5/(1.-0.2126));
 
-                (y as u8, (cb + 128.).round() as u8, (cr + 128.).round() as u8)
+                (y.round() as u8, (cb + 128.).round() as u8, (cr + 128.).round() as u8)
             },
             ColorSpace::RGB => {
                 (px.g, px.b, px.r)
@@ -112,11 +112,11 @@ pub fn encode_rgb(buffer: Img<&[RGB8]>, config: &EncConfig) -> Result<(Vec<u8>, 
     for px in buffer.pixels() {
         let (y,u,v) = match config.color_space {
             ColorSpace::YCbCr => {
-                let y  = (0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32).round();
+                let y  = 0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32;
                 let cb = (px.b as f32 - y) * (0.5/(1.-0.0722));
                 let cr = (px.r as f32 - y) * (0.5/(1.-0.2126));
 
-                (y as u8, (cb + 128.).round() as u8, (cr + 128.).round() as u8)
+                (y.round() as u8, (cb + 128.).round() as u8, (cr + 128.).round() as u8)
             },
             ColorSpace::RGB => {
                 (px.g, px.b, px.r)
