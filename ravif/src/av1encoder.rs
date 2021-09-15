@@ -285,7 +285,6 @@ impl SpeedTweaks {
         let mut speed_settings = SpeedSettings::from_preset(self.speed_preset.into());
 
         speed_settings.multiref = false;
-        speed_settings.fast_scene_detection = true;
         speed_settings.no_scene_detection = true;
         speed_settings.include_near_mvs = false;
 
