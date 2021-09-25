@@ -44,8 +44,7 @@ cavif [OPTIONS] IMAGES...
 
 There are additional options that tweak AVIF color space. The defaults in `cavif` are chosen to be the best, so use these options only when you know it's necessary:
 
- * `--premultiplied-alpha` — Alternative compression mode that lowers quality of semi-transparent colors. Warning: at low qualities it may create black artifacts in transparent areas.
- * `--dirty-alpha` — Preserve RGB values of fully transparent pixels. By default irrelevant color of transparent pixels is cleared to avoid wasting space.
+ * `--dirty-alpha` — Preserve RGB values of fully transparent pixels (not recommended). By default irrelevant color of transparent pixels is cleared to avoid wasting space.
  * `--color=rgb` — Encode using RGB instead of YCbCr color space. Makes colors closer to lossless, but makes files larger. Use only if you need to avoid even smallest color shifts.
 
 

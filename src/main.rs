@@ -99,11 +99,7 @@ fn run() -> Result<(), BoxError> {
     let overwrite = args.is_present("overwrite");
     let quiet = args.is_present("quiet");
     let threads: usize = value_t!(args, "threads", usize)?;
-    let premultiplied_alpha = args.is_present("premultiplied-alpha");
     let dirty_alpha = args.is_present("dirty-alpha");
-    if dirty_alpha && premultiplied_alpha {
-        return Err("premultiplied alpha option makes dirty alpha impossible".into());
-    }
 
     let color_space = match args.value_of("color").expect("default") {
         "ycbcr" => ColorSpace::YCbCr,
@@ -149,7 +145,7 @@ fn run() -> Result<(), BoxError> {
     };
 
     let process = move |data: Vec<u8>, input_path: &MaybePath| -> Result<(), BoxError> {
-        let mut img = load_rgba(&data, premultiplied_alpha)?;
+        let mut img = load_rgba(&data, false)?;
         drop(data);
         let out_path = match (&output, input_path) {
             (None, MaybePath::Path(input)) => MaybePath::Path(input.with_extension("avif")),
@@ -170,12 +166,13 @@ fn run() -> Result<(), BoxError> {
             },
             _ => {},
         }
-        if !dirty_alpha && !premultiplied_alpha {
+        if !dirty_alpha {
             img = cleared_alpha(img);
         }
         let (out_data, color_size, alpha_size) = encode_rgba(img.as_ref(), &Config {
             quality, speed,
-            alpha_quality, premultiplied_alpha,
+            alpha_quality,
+            premultiplied_alpha: false,
             color_space, threads,
         })?;
         match out_path {
