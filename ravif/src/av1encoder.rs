@@ -161,33 +161,37 @@ pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &
     let threads = if config.threads > 0 { config.threads } else { num_cpus::get() };
 
     // Firefox 81 doesn't support Full yet, but doesn't support alpha either
-    let (color, alpha) = rayon::join(
-        || encode_to_av1(&Av1EncodeConfig {
-                width,
-                height,
-                planes: &[&y_plane, &u_plane, &v_plane],
-                quantizer,
-                speed: SpeedTweaks::from_my_preset(config.speed, config.quality as _),
-                threads,
-                pixel_range: color_pixel_range,
-                chroma_sampling: ChromaSampling::Cs444,
-                color_description,
-            }),
-        || if let Some(a_plane) = a_plane {
-            Some(encode_to_av1(&Av1EncodeConfig {
-                width,
-                height,
-                planes: &[&a_plane],
-                quantizer: alpha_quantizer,
-                speed: SpeedTweaks::from_my_preset(config.speed, config.alpha_quality as _),
-                threads,
-                pixel_range: PixelRange::Full,
-                chroma_sampling: ChromaSampling::Cs400,
-                color_description: None,
-            }))
-          } else {
-            None
-        });
+
+    let encode_color = || encode_to_av1(&Av1EncodeConfig {
+        width,
+        height,
+        planes: &[&y_plane, &u_plane, &v_plane],
+        quantizer,
+        speed: SpeedTweaks::from_my_preset(config.speed, config.quality as _),
+        threads,
+        pixel_range: color_pixel_range,
+        chroma_sampling: ChromaSampling::Cs444,
+        color_description,
+    });
+    let encode_alpha = || if let Some(a_plane) = a_plane {
+        Some(encode_to_av1(&Av1EncodeConfig {
+            width,
+            height,
+            planes: &[&a_plane],
+            quantizer: alpha_quantizer,
+            speed: SpeedTweaks::from_my_preset(config.speed, config.alpha_quality as _),
+            threads,
+            pixel_range: PixelRange::Full,
+            chroma_sampling: ChromaSampling::Cs400,
+            color_description: None,
+        }))
+      } else {
+        None
+    };
+    #[cfg(all(target_arch="wasm32", not(target_feature = "atomics")))]
+    let (color, alpha) = (encode_color(), encode_alpha());
+    #[cfg(not(all(target_arch="wasm32", not(target_feature = "atomics"))))]
+    let (color, alpha) = rayon::join(encode_color, encode_alpha);
     let (color, alpha) = (color?, alpha.transpose()?);
 
     let out = avif_serialize::Aviffy::new()
