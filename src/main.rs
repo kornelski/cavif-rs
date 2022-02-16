@@ -1,4 +1,4 @@
-use clap::{Arg, App, AppSettings, value_t};
+use clap::{Arg, App, AppSettings};
 use imgref::ImgVec;
 use rayon::prelude::*;
 use std::fs;
@@ -34,71 +34,72 @@ fn run() -> Result<(), BoxError> {
         .author("Kornel Lesiński <kornel@imageoptim.com>")
         .about("Convert JPEG/PNG images to AVIF image format (based on AV1/rav1e)")
         .setting(AppSettings::DeriveDisplayOrder)
-        .setting(AppSettings::ColorAuto)
-        .setting(AppSettings::UnifiedHelpMessage)
-        .arg(Arg::with_name("quality")
-            .short("Q")
+        .arg(Arg::new("quality")
+            .short('Q')
             .long("quality")
             .value_name("n")
             .help("Quality from 1 (worst) to 100 (best). NB! Not the same scale as JPEG quality")
             .default_value("80")
             .takes_value(true))
-        .arg(Arg::with_name("speed")
-            .short("s")
+        .arg(Arg::new("speed")
+            .short('s')
             .long("speed")
             .value_name("n")
             .default_value("4")
             .help("Encoding speed from 0 (best) to 10 (fast but ugly)")
             .takes_value(true))
-        .arg(Arg::with_name("threads")
-            .short("j")
+        .arg(Arg::new("threads")
+            .short('j')
             .long("threads")
             .value_name("n")
             .default_value("0")
             .help("Maximum threads to use (0 = one thread per host core)")
             .takes_value(true))
-        .arg(Arg::with_name("overwrite")
+        .arg(Arg::new("overwrite")
             .alias("--force")
-            .short("f")
+            .short('f')
             .long("overwrite")
             .help("Replace files if there's .avif already"))
-        .arg(Arg::with_name("output")
-            .short("o")
+        .arg(Arg::new("output")
+            .short('o')
             .long("output")
+            .allow_invalid_utf8(true)
             .value_name("path")
             .help("Write output to this path instead of same_file.avif. It may be a file or a directory.")
             .takes_value(true))
-        .arg(Arg::with_name("quiet")
-            .short("q")
+        .arg(Arg::new("quiet")
+            .short('q')
             .long("quiet")
             .help("Don't print anything"))
-        .arg(Arg::with_name("dirty-alpha")
+        .arg(Arg::new("dirty-alpha")
             .long("dirty-alpha")
             .help("Keep RGB data of fully-transparent pixels (makes larger, lower quality files)"))
-        .arg(Arg::with_name("color")
+        .arg(Arg::new("color")
             .long("color")
             .default_value("ycbcr")
             .takes_value(true)
             .possible_values(&["ycbcr", "rgb"])
             .help("Internal AVIF color space"))
-        .arg(Arg::with_name("IMAGES")
+        .arg(Arg::new("IMAGES")
             .index(1)
+            .allow_invalid_utf8(true)
+            .min_values(1)
             .help("One or more JPEG or PNG files to convert. \"-\" is interpreted as stdin/stdout.")
-            .multiple(true))
+            .multiple_occurrences(true))
         .get_matches();
 
-    let output = args.value_of("output").map(|s| {
+    let output = args.value_of_os("output").map(|s| {
         match s {
             s if s == "-" => MaybePath::Stdio,
             s => MaybePath::Path(PathBuf::from(s)),
         }
     });
-    let quality = value_t!(args, "quality", f32)?;
+    let quality = args.value_of_t::<f32>("quality")?;
     let alpha_quality = ((quality + 100.)/2.).min(quality + quality/4. + 2.);
-    let speed: u8 = value_t!(args, "speed", u8)?;
+    let speed: u8 = args.value_of_t::<u8>("speed")?;
     let overwrite = args.is_present("overwrite");
     let quiet = args.is_present("quiet");
-    let threads: usize = value_t!(args, "threads", usize)?;
+    let threads: usize = args.value_of_t::<usize>("threads")?;
     let dirty_alpha = args.is_present("dirty-alpha");
 
     let color_space = match args.value_of("color").expect("default") {
@@ -130,7 +131,6 @@ fn run() -> Result<(), BoxError> {
         .collect();
 
     if files.is_empty() {
-        args.usage();
         return Err("No PNG/JPEG files specified".into());
     }
 
@@ -236,6 +236,15 @@ fn load_rgba(mut data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>
         let buf: Vec<_> = match info.pixel_format {
             L8 => {
                 pixels.iter().copied().map(|g| RGBA8::new(g,g,g,255)).collect()
+            },
+            L16 => {
+                // ugh https://github.com/image-rs/jpeg-decoder/issues/223
+                let (unaligned, slice_u16, leftover) = unsafe { pixels.align_to::<u16>() };
+                if !unaligned.is_empty() {
+                    return Err("16-bit depth is unsupported".into());
+                }
+                assert!(leftover.is_empty());
+                slice_u16.iter().copied().map(|g| { let g = (g >> 8) as u8; RGBA8::new(g,g,g,255) }).collect()
             },
             RGB24 => {
                 let rgb = pixels.as_rgb();

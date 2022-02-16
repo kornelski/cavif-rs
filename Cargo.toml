@@ -1,7 +1,7 @@
 [package]
 name = "cavif"
 description = "Encodes images in AVIF format (image2avif converter). Pure Rust."
-version = "1.3.3"
+version = "1.3.4"
 authors = ["Kornel Lesiński <kornel@geekhood.net>"]
 edition = "2018"
 license = "BSD-3-Clause"
@@ -14,14 +14,14 @@ include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
 
 [dependencies]
 ravif = { version = "0.8.8", path = "./ravif", default-features = false }
-lodepng = "3.4.6"
-num_cpus = "1.13.0"
+lodepng = "3.6.1"
+num_cpus = "1.13.1"
 rayon = "1.5.1"
-rgb = "0.8.29"
-cocoa_image = { version = "1.0.4", optional = true }
+rgb = "0.8.31"
+cocoa_image = { version = "1.0.5", optional = true }
 imgref = "1.9.1"
-jpeg-decoder = "0.1.22"
-clap = { version = "2.33.3", default-features = false, features = ["color", "suggestions", "wrap_help"] }
+jpeg-decoder = "0.2.2"
+clap = { version = "3.0.14", default-features = false, features = ["color", "suggestions", "wrap_help", "std", "cargo"] }
 
 [features]
 default = ["asm"]
@@ -40,4 +40,7 @@ lto = true
 opt-level = 2
 
 [dev-dependencies]
-avif-parse = "0.13.2"
+avif-parse = "1.0.0"
+
+[badges]
+maintenance = { status = "actively-developed" }
