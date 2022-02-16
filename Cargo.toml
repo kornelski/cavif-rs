@@ -44,3 +44,6 @@ avif-parse = "1.0.0"
 
 [badges]
 maintenance = { status = "actively-developed" }
+
+[workspace]
+members = ["ravif"]

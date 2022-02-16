@@ -38,3 +38,6 @@ opt-level = 2
 
 [dev-dependencies]
 avif-parse = "1.0.0"
+
+[package.metadata.release]
+tag = false
