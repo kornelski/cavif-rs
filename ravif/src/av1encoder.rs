@@ -383,7 +383,7 @@ fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Box<dyn std::error:
     });
 
     if let Some(threads) = p.threads {
-        cfg = cfg.with_threads(p.threads.into());
+        cfg = cfg.with_threads(threads.into());
     }
 
     let mut ctx: Context<u8> = cfg.new_context()?;
