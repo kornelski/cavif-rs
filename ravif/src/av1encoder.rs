@@ -25,8 +25,8 @@ pub struct EncConfig {
     pub premultiplied_alpha: bool,
     /// Which pixel format to use in AVIF file. RGB tends to give larger files.
     pub color_space: ColorSpace,
-    /// How many threads should be used (0 = match core count)
-    pub threads: usize,
+    /// How many threads should be used (0 = match core count), None - use global rayon thread pool
+    pub threads: Option<usize>,
 }
 
 /// Make a new AVIF image from RGBA pixels (non-premultiplied, alpha last)
@@ -158,7 +158,9 @@ pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &
         matrix_coefficients,
     });
 
-    let threads = if config.threads > 0 { config.threads } else { num_cpus::get() };
+    let threads = config.threads.map(|threads| {
+        if threads > 0 { threads } else { num_cpus::get() }
+    });
 
     // Firefox 81 doesn't support Full yet, but doesn't support alpha either
 
@@ -332,7 +334,7 @@ pub(crate) struct Av1EncodeConfig<'a> {
     pub planes: &'a [&'a [u8]],
     pub quantizer: usize,
     pub speed: SpeedTweaks,
-    pub threads: usize,
+    pub threads: Option<usize>,
     pub pixel_range: PixelRange,
     pub chroma_sampling: ChromaSampling,
     pub color_description: Option<ColorDescription>,
@@ -341,12 +343,14 @@ pub(crate) struct Av1EncodeConfig<'a> {
 fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     // AV1 needs all the CPU power you can give it,
     // except when it'd create inefficiently tiny tiles
-    let tiles = p.threads.min((p.width * p.height) / (p.speed.min_tile_size as usize).pow(2));
+    let tiles = {
+        let threads = if let Some(threads) = p.threads { threads } else { rayon::current_num_threads() };
+        threads.min((p.width * p.height) / (p.speed.min_tile_size as usize).pow(2))
+    };
     let bit_depth = 8;
 
     let speed_settings = p.speed.speed_settings();
-    let cfg = Config::new()
-        .with_threads(p.threads.into())
+    let mut cfg = Config::new()
         .with_encoder_config(EncoderConfig {
         width: p.width,
         height: p.height,
@@ -377,6 +381,10 @@ fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Box<dyn std::error:
         rdo_lookahead_frames: 1,
         speed_settings,
     });
+
+    if let Some(threads) = p.threads {
+        cfg = cfg.with_threads(p.threads.into());
+    }
 
     let mut ctx: Context<u8> = cfg.new_context()?;
     let mut frame = ctx.new_frame();
