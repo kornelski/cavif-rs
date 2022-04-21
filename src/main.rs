@@ -1,4 +1,4 @@
-use clap::{Arg, App, AppSettings};
+use clap::{Arg, Command, AppSettings};
 use imgref::ImgVec;
 use rayon::prelude::*;
 use std::fs;
@@ -29,7 +29,7 @@ enum MaybePath {
 }
 
 fn run() -> Result<(), BoxError> {
-    let args = App::new("cavif-rs")
+    let args = Command::new("cavif-rs")
         .version(clap::crate_version!())
         .author("Kornel Lesiński <kornel@imageoptim.com>")
         .about("Convert JPEG/PNG images to AVIF image format (based on AV1/rav1e)")
@@ -99,7 +99,7 @@ fn run() -> Result<(), BoxError> {
     let speed: u8 = args.value_of_t::<u8>("speed")?;
     let overwrite = args.is_present("overwrite");
     let quiet = args.is_present("quiet");
-    let threads: usize = args.value_of_t::<usize>("threads")?;
+    let threads = Some(args.value_of_t::<usize>("threads")?);
     let dirty_alpha = args.is_present("dirty-alpha");
 
     let color_space = match args.value_of("color").expect("default") {
