@@ -164,10 +164,10 @@ pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &
 
     // Firefox 81 doesn't support Full yet, but doesn't support alpha either
 
-    let encode_color = || encode_to_av1(&Av1EncodeConfig {
+    let encode_color = move || encode_to_av1(&Av1EncodeConfig {
         width,
         height,
-        planes: &[&y_plane, &u_plane, &v_plane],
+        planes: &[y_plane, u_plane, v_plane],
         quantizer,
         speed: SpeedTweaks::from_my_preset(config.speed, config.quality as _),
         threads,
@@ -175,21 +175,17 @@ pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &
         chroma_sampling: ChromaSampling::Cs444,
         color_description,
     });
-    let encode_alpha = || if let Some(a_plane) = a_plane {
-        Some(encode_to_av1(&Av1EncodeConfig {
-            width,
-            height,
-            planes: &[&a_plane],
-            quantizer: alpha_quantizer,
-            speed: SpeedTweaks::from_my_preset(config.speed, config.alpha_quality as _),
-            threads,
-            pixel_range: PixelRange::Full,
-            chroma_sampling: ChromaSampling::Cs400,
-            color_description: None,
-        }))
-      } else {
-        None
-    };
+    let encode_alpha = move || a_plane.map(|a| encode_to_av1(&Av1EncodeConfig {
+        width,
+        height,
+        planes: &[a],
+        quantizer: alpha_quantizer,
+        speed: SpeedTweaks::from_my_preset(config.speed, config.alpha_quality as _),
+        threads,
+        pixel_range: PixelRange::Full,
+        chroma_sampling: ChromaSampling::Cs400,
+        color_description: None,
+    }));
     #[cfg(all(target_arch="wasm32", not(target_feature = "atomics")))]
     let (color, alpha) = (encode_color(), encode_alpha());
     #[cfg(not(all(target_arch="wasm32", not(target_feature = "atomics"))))]
@@ -334,6 +330,7 @@ pub(crate) struct Av1EncodeConfig<'a> {
     pub planes: &'a [&'a [u8]],
     pub quantizer: usize,
     pub speed: SpeedTweaks,
+    /// 0 means num_cpus
     pub threads: Option<usize>,
     pub pixel_range: PixelRange,
     pub chroma_sampling: ChromaSampling,
@@ -344,7 +341,7 @@ fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Box<dyn std::error:
     // AV1 needs all the CPU power you can give it,
     // except when it'd create inefficiently tiny tiles
     let tiles = {
-        let threads = if let Some(threads) = p.threads { threads } else { rayon::current_num_threads() };
+        let threads = p.threads.unwrap_or_else(rayon::current_num_threads);
         threads.min((p.width * p.height) / (p.speed.min_tile_size as usize).pow(2))
     };
     let bit_depth = 8;
@@ -383,7 +380,7 @@ fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Box<dyn std::error:
     });
 
     if let Some(threads) = p.threads {
-        cfg = cfg.with_threads(threads.into());
+        cfg = cfg.with_threads(threads);
     }
 
     let mut ctx: Context<u8> = cfg.new_context()?;
