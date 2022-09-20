@@ -12,7 +12,8 @@ The pre-built zip includes a portable static executable, with no dependencies, t
 
 * Chrome 85+ desktop,
 * Chrome on Android 12,
-* Firefox 91. Currently Firefox 92 is not supported.
+* Firefox 91,
+* Safari iOS 16/macOS Ventura.
 
 ## Running
 
@@ -52,11 +53,12 @@ There are additional options that tweak AVIF color space. The defaults in `cavif
 
 To build it from source you need:
 
-* Rust 1.52 or later, preferably via [rustup](https://rustup.rs),
+* Rust 1.60 or later, preferably via [rustup](https://rustup.rs),
 * [`nasm`](https://www.nasm.us/) 2.14 or later.
 
 Then run in a terminal:
 
 ```bash
+rustup update
 cargo install cavif
 ```
