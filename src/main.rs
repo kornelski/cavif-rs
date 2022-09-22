@@ -1,3 +1,4 @@
+use load_image::export::rgb::ComponentMap;
 use clap::{Arg, Command, AppSettings};
 use imgref::ImgVec;
 use rayon::prelude::*;
@@ -222,38 +223,20 @@ fn run() -> Result<(), BoxError> {
 }
 
 #[cfg(not(feature = "cocoa_image"))]
-fn load_rgba(mut data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, BoxError> {
-    use rgb::FromSlice;
+fn load_rgba(data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, BoxError> {
 
-    let mut img = if data.get(0..4) == Some(&[0x89,b'P',b'N',b'G']) {
-        let img = lodepng::decode32(data)?;
-        ImgVec::new(img.buffer, img.width, img.height)
-    } else {
-        let mut jecoder = jpeg_decoder::Decoder::new(&mut data);
-        let pixels = jecoder.decode()?;
-        let info = jecoder.info().ok_or("Error reading JPEG info")?;
-        use jpeg_decoder::PixelFormat::*;
-        let buf: Vec<_> = match info.pixel_format {
-            L8 => {
-                pixels.iter().copied().map(|g| RGBA8::new(g,g,g,255)).collect()
-            },
-            L16 => {
-                // ugh https://github.com/image-rs/jpeg-decoder/issues/223
-                let (unaligned, slice_u16, leftover) = unsafe { pixels.align_to::<u16>() };
-                if !unaligned.is_empty() {
-                    return Err("16-bit depth is unsupported".into());
-                }
-                assert!(leftover.is_empty());
-                slice_u16.iter().copied().map(|g| { let g = (g >> 8) as u8; RGBA8::new(g,g,g,255) }).collect()
-            },
-            RGB24 => {
-                let rgb = pixels.as_rgb();
-                rgb.iter().map(|p| p.alpha(255)).collect()
-            },
-            CMYK32 => return Err("CMYK JPEG is not supported. Please convert to PNG first".into()),
-        };
-        ImgVec::new(buf, info.width.into(), info.height.into())
+    let img = load_image::load_data(data)?.into_imgvec();
+    let mut img = match img {
+        load_image::export::imgref::ImgVecKind::RGB8(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.alpha(255)).collect()),
+        load_image::export::imgref::ImgVecKind::RGBA8(img) => img,
+        load_image::export::imgref::ImgVecKind::RGB16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8).alpha(255)).collect()),
+        load_image::export::imgref::ImgVecKind::RGBA16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8)).collect()),
+        load_image::export::imgref::ImgVecKind::GRAY8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.0; RGBA8::new(c,c,c,255) }).collect()),
+        load_image::export::imgref::ImgVecKind::GRAY16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.0>>8) as u8; RGBA8::new(c,c,c,255) }).collect()),
+        load_image::export::imgref::ImgVecKind::GRAYA8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.0; RGBA8::new(c,c,c,g.1) }).collect()),
+        load_image::export::imgref::ImgVecKind::GRAYA16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.0>>8) as u8; RGBA8::new(c,c,c,(g.1>>8) as u8) }).collect()),
     };
+
     if premultiplied_alpha {
         img.pixels_mut().for_each(|px| {
             px.r = (px.r as u16 * px.a as u16 / 255) as u8;
