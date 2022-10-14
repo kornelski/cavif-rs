@@ -10,14 +10,14 @@ use std::path::PathBuf;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-use ravif::*;
+use ravif::{ColorSpace, Config, RGBA8, cleared_alpha, encode_rgba};
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         let mut source = e.source();
         while let Some(e) = source {
-            eprintln!("  because: {}", e);
+            eprintln!("  because: {e}");
             source = e.source();
         }
         std::process::exit(1);
@@ -79,7 +79,7 @@ fn run() -> Result<(), BoxError> {
             .long("color")
             .default_value("ycbcr")
             .takes_value(true)
-            .possible_values(&["ycbcr", "rgb"])
+            .possible_values(["ycbcr", "rgb"])
             .help("Internal AVIF color space"))
         .arg(Arg::new("IMAGES")
             .index(1)
@@ -106,7 +106,7 @@ fn run() -> Result<(), BoxError> {
     let color_space = match args.value_of("color").expect("default") {
         "ycbcr" => ColorSpace::YCbCr,
         "rgb" => ColorSpace::RGB,
-        x => Err(format!("bad color type: {}", x))?,
+        x => Err(format!("bad color type: {x}"))?,
     };
     let files = args.values_of_os("IMAGES").ok_or("Please specify image paths to convert")?;
     let files: Vec<_> = files
@@ -114,7 +114,7 @@ fn run() -> Result<(), BoxError> {
             let path = Path::new(&pathstr);
             if let Some(s) = path.to_str() {
                 if quiet && s.parse::<u8>().is_ok() && !path.exists() {
-                    eprintln!("warning: -q is not for quality, so '{s}' is misinterpreted as a file. Use -Q {s}", s = s);
+                    eprintln!("warning: -q is not for quality, so '{s}' is misinterpreted as a file. Use -Q {s}");
                 }
             }
             path.extension().map_or(true, |e| if e == "avif" {
@@ -154,12 +154,12 @@ fn run() -> Result<(), BoxError> {
                 if use_dir {
                     output.join(Path::new(input.file_name().unwrap()).with_extension("avif"))
                 } else {
-                    output.to_owned()
+                    output.clone()
                 }
             }),
             (None, MaybePath::Stdio) |
             (Some(MaybePath::Stdio), _) => MaybePath::Stdio,
-            (Some(MaybePath::Path(output)), MaybePath::Stdio) => MaybePath::Path(output.to_owned()),
+            (Some(MaybePath::Path(output)), MaybePath::Stdio) => MaybePath::Path(output.clone()),
         };
         match out_path {
             MaybePath::Path(ref p) if !overwrite && p.exists() => {
@@ -179,14 +179,14 @@ fn run() -> Result<(), BoxError> {
         match out_path {
             MaybePath::Path(ref p) => {
                 if !quiet {
-                    println!("{}: {}KB ({}B color, {}B alpha, {}B HEIF)", p.display(), (out_data.len()+999)/1000, color_size, alpha_size, out_data.len() - color_size - alpha_size);
+                    println!("{}: {}KB ({color_size}B color, {alpha_size}B alpha, {}B HEIF)", p.display(), (out_data.len()+999)/1000, out_data.len() - color_size - alpha_size);
                 }
                 fs::write(p, out_data)
             },
             MaybePath::Stdio => {
                 std::io::stdout().write_all(&out_data)
             },
-        }.map_err(|e| format!("Unable to write output image: {}", e))?;
+        }.map_err(|e| format!("Unable to write output image: {e}"))?;
         Ok(())
     };
 
@@ -200,13 +200,13 @@ fn run() -> Result<(), BoxError> {
             },
             MaybePath::Path(ref path) => {
                 let data = fs::read(path)
-                    .map_err(|e| format!("Unable to read input image {}: {}", path.display(), e))?;
+                    .map_err(|e| format!("Unable to read input image {}: {e}", path.display()))?;
                 tmp = path.display();
                 (data, &tmp)
             },
         };
         process(data, &path)
-            .map_err(|e| BoxError::from(format!("{}: error: {}", path_str, e)))
+            .map_err(|e| BoxError::from(format!("{path_str}: error: {e}")))
     })
     .filter_map(|res| res.err())
     .collect::<Vec<BoxError>>();
@@ -214,7 +214,7 @@ fn run() -> Result<(), BoxError> {
     if !failures.is_empty() {
         if !quiet {
             for f in failures {
-                eprintln!("{}", f);
+                eprintln!("{f}");
             }
         }
         std::process::exit(1);
@@ -239,9 +239,9 @@ fn load_rgba(data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, Bo
 
     if premultiplied_alpha {
         img.pixels_mut().for_each(|px| {
-            px.r = (px.r as u16 * px.a as u16 / 255) as u8;
-            px.g = (px.g as u16 * px.a as u16 / 255) as u8;
-            px.b = (px.b as u16 * px.a as u16 / 255) as u8;
+            px.r = (u16::from(px.r) * u16::from(px.a) / 255) as u8;
+            px.g = (u16::from(px.g) * u16::from(px.a) / 255) as u8;
+            px.b = (u16::from(px.b) * u16::from(px.a) / 255) as u8;
         });
     }
     Ok(img)
