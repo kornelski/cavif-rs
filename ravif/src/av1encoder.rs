@@ -231,15 +231,17 @@ pub struct SpeedTweaks {
 
 impl SpeedTweaks {
     pub fn from_my_preset(speed: u8, quality: u8) -> Self {
-        let low_quality = quality < 60;
+        let low_quality = quality < 55;
+        let high_quality = quality > 80;
+        let max_block_size = if high_quality { 16 } else { 64 };
 
         Self {
             speed_preset: speed,
 
             partition_range: Some(match speed {
-                0 => (4, 64),
-                1 if low_quality => (4, 64),
-                2 if low_quality => (4, 32),
+                0 => (4, 64.min(max_block_size)),
+                1 if low_quality => (4, 64.min(max_block_size)),
+                2 if low_quality => (4, 32.min(max_block_size)),
                 1..=4 => (4, 16),
                 5..=8 => (8, 16),
                 _ => (16, 16),
@@ -254,13 +256,13 @@ impl SpeedTweaks {
             non_square_partition: Some(speed <= 3), // doesn't seem to do anything?
 
             // these two are together?
-            rdo_tx_decision: Some(speed <= 4),
+            rdo_tx_decision: Some(speed <= 4 && !high_quality), // it tends to blur subtle textures
             reduced_tx_set: Some(speed == 4 || speed >= 9), // It interacts with tx_domain_distortion too?
 
             // 4px blocks disabled at 5
 
             fine_directional_intra: Some(speed <= 6),
-            fast_deblock: Some(speed >= 7), // mixed bag?
+            fast_deblock: Some(speed >= 7 && !high_quality), // mixed bag?
 
             // 8px blocks disabled at 8
             lrf: Some(low_quality && speed <= 8), // hardly any help for hi-q images. recovers some q at low quality
@@ -278,7 +280,7 @@ impl SpeedTweaks {
                 3 => 512,
                 4 => 256,
                 _ => 128,
-            },
+            } * if high_quality { 2 } else { 1 },
         }
     }
 
