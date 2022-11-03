@@ -1,9 +1,9 @@
 [package]
 name = "ravif"
 description = "rav1e-based pure Rust library for encoding images in AVIF format (powers the `cavif` tool)"
-version = "0.9.0"
+version = "0.9.1"
 authors = ["Kornel Lesiński <kornel@geekhood.net>"]
-edition = "2018"
+edition = "2021"
 license = "BSD-3-Clause"
 readme = "README.md"
 keywords = ["avif", "convert", "av1", "rav1f", "cav1f"]
@@ -11,15 +11,14 @@ categories = ["multimedia::images", "multimedia::encoding"]
 homepage = "https://lib.rs/ravif"
 repository = "https://github.com/kornelski/cavif-rs"
 include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
-resolver = "2"
 
 [dependencies]
 avif-serialize = "0.7.6"
-num_cpus = "1.13.1"
+num_cpus = "1.14.0"
 rav1e = { version = "0.5.1", default-features = false }
-rayon = "1.5.2"
-rgb = "0.8.32"
-imgref = "1.9.1"
+rayon = "1.5.3"
+rgb = "0.8.34"
+imgref = "1.9.4"
 loop9 = "0.1.3"
 
 [target.'cfg(target = "wasm32-unknown-unknown")'.dependencies]
