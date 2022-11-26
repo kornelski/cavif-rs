@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-use ravif::{ColorSpace, Config, RGBA8, cleared_alpha, encode_rgba};
+use ravif::{ColorSpace, Encoder, EncodedImage, RGBA8, cleared_alpha};
 
 fn main() {
     if let Err(e) = run() {
@@ -100,7 +100,7 @@ fn run() -> Result<(), BoxError> {
     let speed: u8 = args.value_of_t::<u8>("speed")?;
     let overwrite = args.is_present("overwrite");
     let quiet = args.is_present("quiet");
-    let threads = Some(args.value_of_t::<usize>("threads")?);
+    let threads = args.value_of_t::<usize>("threads")?;
     let dirty_alpha = args.is_present("dirty-alpha");
 
     let color_space = match args.value_of("color").expect("default") {
@@ -170,21 +170,22 @@ fn run() -> Result<(), BoxError> {
         if !dirty_alpha {
             img = cleared_alpha(img);
         }
-        let (out_data, color_size, alpha_size) = encode_rgba(img.as_ref(), &Config {
-            quality, speed,
-            alpha_quality,
-            premultiplied_alpha: false,
-            color_space, threads,
-        })?;
+        let enc = Encoder::new()
+            .with_quality(quality)
+            .with_speed(speed)
+            .with_alpha_quality(alpha_quality)
+            .with_internal_color_space(color_space)
+            .with_num_threads(Some(threads).filter(|&n| n > 0));
+        let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc.encode_rgba(img.as_ref())?;
         match out_path {
             MaybePath::Path(ref p) => {
                 if !quiet {
-                    println!("{}: {}KB ({color_size}B color, {alpha_size}B alpha, {}B HEIF)", p.display(), (out_data.len()+999)/1000, out_data.len() - color_size - alpha_size);
+                    println!("{}: {}KB ({color_byte_size}B color, {alpha_byte_size}B alpha, {}B HEIF)", p.display(), (avif_file.len()+999)/1000, avif_file.len() - color_byte_size - alpha_byte_size);
                 }
-                fs::write(p, out_data)
+                fs::write(p, avif_file)
             },
             MaybePath::Stdio => {
-                std::io::stdout().write_all(&out_data)
+                std::io::stdout().write_all(&avif_file)
             },
         }.map_err(|e| format!("Unable to write output image: {e}"))?;
         Ok(())

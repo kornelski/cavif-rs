@@ -1,18 +1,117 @@
+#![allow(deprecated)]
+use crate::error::Error;
 use imgref::Img;
 use rav1e::prelude::*;
 use rgb::RGB8;
 use rgb::RGBA8;
 
-/// See [`Config`]
+/// For [`Encoder::with_internal_color_space`]
 #[derive(Debug, Copy, Clone)]
 pub enum ColorSpace {
+    /// Standard color space for photographic content. Usually the best choice.
+    /// This library always uses full-resolution color (4:4:4).
     YCbCr,
+    /// RGB channels are encoded without colorspace transformation.
+    /// Usually results in larger file sizes, and is less compatible than `YCbCr`.
+    /// Use only if the content really makes use of RGB, e.g. anaglyph images or RGB subpixel anti-aliasing.
     RGB,
 }
 
-/// Encoder configuration struct
-///
-/// See [`encode_rgba`](crate::encode_rgba)
+/// The image file + extra info
+#[non_exhaustive]
+#[derive(Clone)]
+pub struct EncodedImage {
+    /// AVIF (HEIF+AV1) encoded image data
+    pub avif_file: Vec<u8>,
+    /// FIY: number of bytes of AV1 payload used for the color
+    pub color_byte_size: usize,
+    /// FIY: number of bytes of AV1 payload used for the alpha channel
+    pub alpha_byte_size: usize,
+}
+
+/// Encoder config builder
+#[derive(Debug, Clone)]
+pub struct Encoder {
+    config: EncConfig,
+    /// `false` uses 8 bits, `true` uses 10 bits
+    high_bit_depth: bool,
+}
+
+/// Builder methods
+impl Encoder {
+    /// Start here
+    pub fn new() -> Self {
+        Self {
+            config: EncConfig {
+                quality: 80.,
+                alpha_quality: 80.,
+                speed: 5,
+                premultiplied_alpha: false,
+                color_space: ColorSpace::YCbCr,
+                threads: None,
+            },
+            high_bit_depth: false,
+        }
+    }
+
+    /// Quality 1..=100. Panics if out of range.
+    #[inline(always)]
+    #[track_caller]
+    pub fn with_quality(mut self, quality: f32) -> Self {
+        assert!(quality >= 1. && quality <= 100.);
+        self.config.quality = quality;
+        self
+    }
+
+    /// Quality for the alpha channel only. 1..=100. Panics if out of range.
+    #[inline(always)]
+    #[track_caller]
+    pub fn with_alpha_quality(mut self, quality: f32) -> Self {
+        assert!(quality >= 1. && quality <= 100.);
+        self.config.alpha_quality = quality;
+        self
+    }
+
+    /// 1..=10. 1 = very very slow, but max compression.
+    /// 10 = quick, but larger file sizes and lower quality.
+    #[inline(always)]
+    #[track_caller]
+    pub fn with_speed(mut self, speed: u8) -> Self {
+        assert!(speed >= 1 && speed <= 10);
+        self.config.speed = speed;
+        self
+    }
+
+    /// Changes how color channels are stored in the image. The default is YCbCr.
+    ///
+    /// Note that this is only internal detail for the AVIF file, and doesn't
+    /// change color space of inputs to encode functions.
+    #[inline(always)]
+    pub fn with_internal_color_space(mut self, color_space: ColorSpace) -> Self {
+        self.config.color_space = color_space;
+        self
+    }
+
+    /// Store color channels using 10-bit depth instead of the default 8-bit.
+    #[inline(always)]
+    pub fn with_internal_10_bit_depth(mut self, high_bit_depth: bool) -> Self {
+        self.high_bit_depth = high_bit_depth;
+        self
+    }
+
+    /// Configures `rayon` thread pool size.
+    /// The default `None` is to use all threads in the default `rayon` thread pool.
+    #[inline(always)]
+    #[track_caller]
+    pub fn with_num_threads(mut self, num_threads: Option<usize>) -> Self {
+        assert!(num_threads.map_or(true, |n| n > 0));
+        self.config.threads = num_threads;
+        self
+    }
+}
+
+/// Use [`Encoder::new`] instead.
+#[deprecated(note = "use Encoder::new()")]
 #[derive(Debug, Copy, Clone)]
 pub struct EncConfig {
     /// 0-100 scale
@@ -28,6 +127,9 @@ pub struct EncConfig {
     /// How many threads should be used (0 = match core count), None - use global rayon thread pool
     pub threads: Option<usize>,
 }
+
+/// Once done with config, call one of the `encode_*` functions
+impl Encoder {
 
 /// Make a new AVIF image from RGBA pixels (non-premultiplied, alpha last)
 ///
@@ -49,18 +151,15 @@ pub struct EncConfig {
 /// It's highly recommended to apply [`cleared_alpha`](crate::cleared_alpha) first.
 ///
 /// returns AVIF file, size of color metadata, size of alpha metadata overhead
-pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
+pub fn encode_rgba(&self, buffer: Img<&[RGBA8]>) -> Result<EncodedImage, Error> {
     let width = buffer.width();
     let height = buffer.height();
-    if buffer.buf().len() < width * height {
-        return Err("Too few pixels".into());
-    }
     let mut y_plane = Vec::with_capacity(width*height);
     let mut u_plane = Vec::with_capacity(width*height);
     let mut v_plane = Vec::with_capacity(width*height);
     let mut a_plane = Vec::with_capacity(width*height);
     for px in buffer.pixels() {
-        let (y,u,v) = match config.color_space {
+        let (y,u,v) = match self.config.color_space {
             ColorSpace::YCbCr => {
                 let y  = 0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32;
                 let cb = (px.b as f32 - y) * (0.5/(1.-0.0722));
@@ -81,7 +180,7 @@ pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>
     let use_alpha = a_plane.iter().copied().any(|b| b != 255);
     let color_pixel_range = PixelRange::Full;
 
-    encode_raw_planes(width, height, &y_plane, &u_plane, &v_plane, if use_alpha { Some(&a_plane) } else { None }, color_pixel_range, config)
+    self.encode_raw_planes_8_bit(width, height, &y_plane, &u_plane, &v_plane, if use_alpha { Some(&a_plane) } else { None }, color_pixel_range)
 }
 
 /// Make a new AVIF image from RGB pixels
@@ -100,17 +199,14 @@ pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>
 /// ```
 ///
 /// returns AVIF file, size of color metadata
-pub fn encode_rgb(buffer: Img<&[RGB8]>, config: &EncConfig) -> Result<(Vec<u8>, usize), Box<dyn std::error::Error + Send + Sync>> {
+pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
     let width = buffer.width();
     let height = buffer.height();
-    if buffer.buf().len() < width * height {
-        return Err("Too few pixels".into());
-    }
     let mut y_plane = Vec::with_capacity(width*height);
     let mut u_plane = Vec::with_capacity(width*height);
     let mut v_plane = Vec::with_capacity(width*height);
     for px in buffer.pixels() {
-        let (y,u,v) = match config.color_space {
+        let (y,u,v) = match self.config.color_space {
             ColorSpace::YCbCr => {
                 let y  = 0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32;
                 let cb = (px.b as f32 - y) * (0.5/(1.-0.0722));
@@ -129,18 +225,19 @@ pub fn encode_rgb(buffer: Img<&[RGB8]>, config: &EncConfig) -> Result<(Vec<u8>, 
 
     let color_pixel_range = PixelRange::Full;
 
-    let (avif, heif_bloat, _) = encode_raw_planes(width, height, &y_plane, &u_plane, &v_plane, None, color_pixel_range, config)?;
-    Ok((avif, heif_bloat))
+    self.encode_raw_planes_8_bit(width, height, &y_plane, &u_plane, &v_plane, None, color_pixel_range)
 }
 
-/// If config.color_space is ColorSpace::YCbCr, then it takes 8-bit BT709 color space.
+/// If config.color_space is ColorSpace::YCbCr, then it takes 8-bit BT.709 color space.
 ///
 /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
 ///
 /// returns AVIF file, size of color metadata, size of alpha metadata overhead
-pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &[u8], v_plane: &[u8], a_plane: Option<&[u8]>, color_pixel_range: PixelRange, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
+pub fn encode_raw_planes_8_bit(&self, width: usize, height: usize, y_plane: &[u8], u_plane: &[u8], v_plane: &[u8], a_plane: Option<&[u8]>, color_pixel_range: PixelRange) -> Result<EncodedImage, Error> {
+    let config = &self.config;
+
     if y_plane.len() < width * height {
-        return Err("Too few pixels".into());
+        return Err(Error::TooFewPixels);
     }
 
     // quality setting
@@ -192,13 +289,16 @@ pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &
     let (color, alpha) = rayon::join(encode_color, encode_alpha);
     let (color, alpha) = (color?, alpha.transpose()?);
 
-    let out = avif_serialize::Aviffy::new()
+    let avif_file = avif_serialize::Aviffy::new()
         .premultiplied_alpha(config.premultiplied_alpha)
         .to_vec(&color, alpha.as_deref(), width as u32, height as u32, 8);
-    let color_size = color.len();
-    let alpha_size = alpha.as_ref().map_or(0, |a| a.len());
+    let color_byte_size = color.len();
+    let alpha_byte_size = alpha.as_ref().map_or(0, |a| a.len());
 
-    Ok((out, color_size, alpha_size))
+    Ok(EncodedImage {
+        avif_file, color_byte_size, alpha_byte_size,
+    })
+}
 }
 
 fn quality_to_quantizer(quality: f32) -> usize {
@@ -339,7 +439,7 @@ pub(crate) struct Av1EncodeConfig<'a> {
     pub color_description: Option<ColorDescription>,
 }
 
-fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Error> {
     // AV1 needs all the CPU power you can give it,
     // except when it'd create inefficiently tiny tiles
     let tiles = {
@@ -410,4 +510,25 @@ fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Box<dyn std::error:
         }
     }
     Ok(out)
+}
+
+#[deprecated(note = "use Encoder::new().encode_rgba(…)")]
+#[cold]
+pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
+    let res = Encoder { config: *config, high_bit_depth: false }.encode_rgba(buffer)?;
+    Ok((res.avif_file, res.color_byte_size, res.alpha_byte_size))
+}
+
+#[deprecated(note = "use Encoder::new().encode_rgb(…)")]
+#[cold]
+pub fn encode_rgb(buffer: Img<&[RGB8]>, config: &EncConfig) -> Result<(Vec<u8>, usize), Box<dyn std::error::Error + Send + Sync>> {
+    let res = Encoder { config: *config, high_bit_depth: false }.encode_rgb(buffer)?;
+    Ok((res.avif_file, res.color_byte_size))
+}
+
+#[deprecated(note = "use Encoder::new().encode_raw_planes(…)")]
+#[cold]
+pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &[u8], v_plane: &[u8], a_plane: Option<&[u8]>, color_pixel_range: PixelRange, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
+    let res = Encoder { config: *config, high_bit_depth: false }.encode_raw_planes_8_bit(width, height, y_plane, u_plane, v_plane, a_plane, color_pixel_range)?;
+    Ok((res.avif_file, res.color_byte_size, res.alpha_byte_size))
 }
