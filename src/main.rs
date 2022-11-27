@@ -13,7 +13,7 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("Error: {e}");
+        eprintln!("error: {e}");
         let mut source = e.source();
         while let Some(e) = source {
             eprintln!("  because: {e}");
@@ -117,7 +117,14 @@ fn run() -> Result<(), BoxError> {
                 }
             }
             path.extension().map_or(true, |e| if e == "avif" {
-                if !quiet { eprintln!("warning: ignoring {}", path.display()); }
+                if !quiet {
+                    if path.exists() {
+                        eprintln!("warning: ignoring {}, because it's already an AVIF", path.display());
+                    } else {
+                        eprintln!("warning: Did you mean to use -o {p}?", p = path.display());
+                        return true;
+                    }
+                }
                 false
             } else {
                 true
@@ -212,7 +219,7 @@ fn run() -> Result<(), BoxError> {
     if !failures.is_empty() {
         if !quiet {
             for f in failures {
-                eprintln!("{f}");
+                eprintln!("error: {f}");
             }
         }
         std::process::exit(1);

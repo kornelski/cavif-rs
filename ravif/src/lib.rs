@@ -1,10 +1,18 @@
+//! ```rust
+//! use ravif::*;
+//! # fn doit(pixels: &[RGBA8], width: usize, height: usize) -> Result<(), Error> {
+//! let res = Encoder::new()
+//!     .with_quality(70.)
+//!     .with_speed(4)
+//!     .encode_rgba(Img::new(pixels, width, height))?;
+//! std::fs::write("hello.avif", res.avif_file);
+//! # Ok(()) }
+
 mod av1encoder;
 
 mod error;
 pub use error::Error;
 
-#[allow(deprecated)]
-pub use av1encoder::encode_raw_planes;
 #[allow(deprecated)]
 pub use av1encoder::encode_rgb;
 #[allow(deprecated)]
@@ -19,8 +27,6 @@ pub use av1encoder::EncodedImage;
 pub use av1encoder::EncConfig as Config;
 
 mod dirtyalpha;
-#[allow(deprecated)]
-pub use dirtyalpha::cleared_alpha;
 
 #[doc(no_inline)]
 pub use imgref::Img;

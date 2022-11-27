@@ -14,7 +14,7 @@ include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
 rust-version = "1.60"
 
 [dependencies]
-ravif = { version = "0.9.2", path = "./ravif", default-features = false }
+ravif = { version = "0.10", path = "./ravif", default-features = false }
 rayon = "1.6.0"
 rgb = "0.8.34"
 cocoa_image = { version = "1.0.5", optional = true }

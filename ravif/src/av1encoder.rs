@@ -37,15 +37,15 @@ pub enum AlphaColorMode {
     Premultiplied,
 }
 
-/// The image file + extra info
+/// The newly-created image file + extra info FYI
 #[non_exhaustive]
 #[derive(Clone)]
 pub struct EncodedImage {
     /// AVIF (HEIF+AV1) encoded image data
     pub avif_file: Vec<u8>,
-    /// FIY: number of bytes of AV1 payload used for the color
+    /// FYI: number of bytes of AV1 payload used for the color
     pub color_byte_size: usize,
-    /// FIY: number of bytes of AV1 payload used for the alpha channel
+    /// FYI: number of bytes of AV1 payload used for the alpha channel
     pub alpha_byte_size: usize,
 }
 
@@ -53,8 +53,6 @@ pub struct EncodedImage {
 #[derive(Debug, Clone)]
 pub struct Encoder {
     config: EncConfig,
-    /// `false` uses 8 bits, `true` uses 10 bits
-    high_bit_depth: bool,
     /// [`AlphaColorMode`]
     alpha_color_mode: AlphaColorMode,
 }
@@ -73,7 +71,6 @@ impl Encoder {
                 color_space: ColorSpace::YCbCr,
                 threads: None,
             },
-            high_bit_depth: false,
             alpha_color_mode: AlphaColorMode::UnassociatedClean,
         }
     }
@@ -120,14 +117,6 @@ impl Encoder {
         self
     }
 
-    /// Store color channels using 10-bit depth instead of the default 8-bit.
-    #[inline(always)]
-    #[must_use]
-    pub fn with_internal_10_bit_depth(mut self, high_bit_depth: bool) -> Self {
-        self.high_bit_depth = high_bit_depth;
-        self
-    }
-
     /// Configures `rayon` thread pool size.
     /// The default `None` is to use all threads in the default `rayon` thread pool.
     #[inline(always)]
@@ -152,6 +141,7 @@ impl Encoder {
 /// Use [`Encoder::new`] instead.
 #[deprecated(note = "use Encoder::new()")]
 #[derive(Debug, Copy, Clone)]
+#[doc(hidden)]
 pub struct EncConfig {
     /// 0-100 scale
     pub quality: f32,
@@ -170,83 +160,90 @@ pub struct EncConfig {
 /// Once done with config, call one of the `encode_*` functions
 impl Encoder {
 
-/// Make a new AVIF image from RGBA pixels (non-premultiplied, alpha last)
-///
-/// Make the `Img` for the `buffer` like this:
-///
-/// ```rust,ignore
-/// Img::new(&pixels_rgba[..], width, height)
-/// ```
-///
-/// If you have pixels as `u8` slice, then first do:
-///
-/// ```rust,ignore
-/// use rgb::ComponentSlice;
-/// let pixels_rgba = pixels_u8.as_rgba();
-/// ```
-///
-/// If all pixels are opaque, alpha channel will be left out automatically.
-///
-/// It's highly recommended to apply [`cleared_alpha`](crate::cleared_alpha) first.
-///
-/// returns AVIF file, size of color metadata, size of alpha metadata overhead
-pub fn encode_rgba(&self, in_buffer: Img<&[RGBA8]>) -> Result<EncodedImage, Error> {
-    let tmp;
-    let buffer = match self.alpha_color_mode {
-        AlphaColorMode::UnassociatedDirty => in_buffer,
-        AlphaColorMode::UnassociatedClean => {
-            if let Some(new) = blurred_dirty_alpha(in_buffer) {
-                tmp = new;
-                tmp.as_ref()
-            } else {
-                in_buffer
-            }
-        },
-        AlphaColorMode::Premultiplied => {
-            let prem = in_buffer.pixels()
-                .filter(|px| px.a != 255)
-                .map(|px| if px.a == 0 { RGBA8::default() } else { RGBA8::new(
-                    (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
-                    (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
-                    (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
-                    px.a,
-                )})
-                .collect();
-            tmp = ImgVec::new(prem, in_buffer.width(), in_buffer.height());
-            tmp.as_ref()
-        },
-    };
+    /// Make a new AVIF image from RGBA pixels (non-premultiplied, alpha last)
+    ///
+    /// Make the `Img` for the `buffer` like this:
+    ///
+    /// ```rust,ignore
+    /// Img::new(&pixels_rgba[..], width, height)
+    /// ```
+    ///
+    /// If you have pixels as `u8` slice, then first do:
+    ///
+    /// ```rust,ignore
+    /// use rgb::ComponentSlice;
+    /// let pixels_rgba = pixels_u8.as_rgba();
+    /// ```
+    ///
+    /// If all pixels are opaque, the alpha channel will be left out automatically.
+    ///
+    /// This function takes 8-bit inputs, but will generate an AVIF file using 10-bit depth.
+    ///
+    /// returns AVIF file with info about sizes about AV1 payload.
+    pub fn encode_rgba(&self, in_buffer: Img<&[rgb::RGBA<u8>]>) -> Result<EncodedImage, Error> {
+        let new_alpha = self.convert_alpha(in_buffer);
+        let buffer = new_alpha.as_ref().map(|b| b.as_ref()).unwrap_or(in_buffer);
 
-    let width = buffer.width();
-    let height = buffer.height();
-    let mut y_plane = Vec::with_capacity(width*height);
-    let mut u_plane = Vec::with_capacity(width*height);
-    let mut v_plane = Vec::with_capacity(width*height);
-    let mut a_plane = Vec::with_capacity(width*height);
-    for px in buffer.pixels() {
-        let (y,u,v) = match self.config.color_space {
-            ColorSpace::YCbCr => {
-                let y  = 0.2126 * f32::from(px.r) + 0.7152 * f32::from(px.g) + 0.0722 * f32::from(px.b);
-                let cb = (f32::from(px.b) - y) * (0.5/(1.-0.0722));
-                let cr = (f32::from(px.r) - y) * (0.5/(1.-0.2126));
-
-                (y.round() as u8, (cb + 128.).round() as u8, (cr + 128.).round() as u8)
-            },
-            ColorSpace::RGB => {
-                (px.g, px.b, px.r)
-            },
-        };
-        y_plane.push(y);
-        u_plane.push(u);
-        v_plane.push(v);
-        a_plane.push(px.a);
+        let width = buffer.width();
+        let height = buffer.height();
+        let planes = buffer.pixels().map(|px| {
+            let (y,u,v) = match self.config.color_space {
+                ColorSpace::YCbCr => {
+                    rgb_to_10_bit_ycbcr(px.rgb())
+                },
+                ColorSpace::RGB => {
+                    rgb_to_10_bit_gbr(px.rgb())
+                },
+            };
+            [y, u, v]
+        });
+        let use_alpha = buffer.pixels().any(|px| px.a != 255);
+        let color_pixel_range = PixelRange::Full;
+        self.encode_raw_planes_10_bit(width, height, planes, if use_alpha {Some(buffer.pixels().map(|px| px.a))} else {None}, color_pixel_range)
     }
 
-    let use_alpha = a_plane.iter().copied().any(|b| b != 255);
-    let color_pixel_range = PixelRange::Full;
+    /// Same as `encode_rgba`, but uses 8-bit depth internally in the AVIF file instead of preferred 10-bit. Usually gives worse compression and worse quality due to rounding.
+    pub fn encode_rgba_into_8_bit(&self, in_buffer: Img<&[rgb::RGBA<u8>]>) -> Result<EncodedImage, Error> {
+        let new_alpha = self.convert_alpha(in_buffer);
+        let buffer = new_alpha.as_ref().map(|b| b.as_ref()).unwrap_or(in_buffer);
 
-    self.encode_raw_planes_8_bit(width, height, &y_plane, &u_plane, &v_plane, if use_alpha { Some(&a_plane) } else { None }, color_pixel_range)
-}
+        let width = buffer.width();
+        let height = buffer.height();
+        let planes = buffer.pixels().map(|px| {
+            let (y,u,v) = match self.config.color_space {
+                ColorSpace::YCbCr => {
+                    rgb_to_8_bit_ycbcr(px.rgb(), )
+                },
+                ColorSpace::RGB => {
+                    rgb_to_8_bit_gbr(px.rgb())
+                },
+            };
+            [y, u, v]
+        });
+        let color_pixel_range = PixelRange::Full;
+        self.encode_raw_planes_8_bit(width, height, planes, None::<std::vec::IntoIter<_>>, color_pixel_range)
+    }
+
+    fn convert_alpha(&self, in_buffer: Img<&[RGBA8]>) -> Option<ImgVec<RGBA8>> {
+        match self.alpha_color_mode {
+            AlphaColorMode::UnassociatedDirty => None,
+            AlphaColorMode::UnassociatedClean => {
+                blurred_dirty_alpha(in_buffer)
+            },
+            AlphaColorMode::Premultiplied => {
+                let prem = in_buffer.pixels()
+                    .filter(|px| px.a != 255)
+                    .map(|px| if px.a == 0 { RGBA8::default() } else { RGBA8::new(
+                        (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
+                        (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
+                        (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
+                        px.a,
+                    )})
+                    .collect();
+                Some(ImgVec::new(prem, in_buffer.width(), in_buffer.height()))
+            },
+        }
+    }
 
 /// Make a new AVIF image from RGB pixels
 ///
@@ -267,30 +264,21 @@ pub fn encode_rgba(&self, in_buffer: Img<&[RGBA8]>) -> Result<EncodedImage, Erro
 pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
     let width = buffer.width();
     let height = buffer.height();
-    let mut y_plane = Vec::with_capacity(width*height);
-    let mut u_plane = Vec::with_capacity(width*height);
-    let mut v_plane = Vec::with_capacity(width*height);
-    for px in buffer.pixels() {
+    let planes = buffer.pixels().map(|px| {
         let (y,u,v) = match self.config.color_space {
             ColorSpace::YCbCr => {
-                let y  = 0.2126 * f32::from(px.r) + 0.7152 * f32::from(px.g) + 0.0722 * f32::from(px.b);
-                let cb = (f32::from(px.b) - y) * (0.5/(1.-0.0722));
-                let cr = (f32::from(px.r) - y) * (0.5/(1.-0.2126));
-
-                (y.round() as u8, (cb + 128.).round() as u8, (cr + 128.).round() as u8)
+                rgb_to_10_bit_ycbcr(px)
             },
             ColorSpace::RGB => {
-                (px.g, px.b, px.r)
+                rgb_to_10_bit_gbr(px)
             },
         };
-        y_plane.push(y);
-        u_plane.push(u);
-        v_plane.push(v);
-    }
+        [y, u, v]
+    });
 
     let color_pixel_range = PixelRange::Full;
 
-    self.encode_raw_planes_8_bit(width, height, &y_plane, &u_plane, &v_plane, None, color_pixel_range)
+    self.encode_raw_planes_10_bit(width, height, planes, None::<std::vec::IntoIter<_>>, color_pixel_range)
 }
 
 /// If `config.color_space` is `ColorSpace::YCbCr`, then it takes 8-bit BT.709 color space.
@@ -298,12 +286,21 @@ pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
 /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
 ///
 /// returns AVIF file, size of color metadata, size of alpha metadata overhead
-pub fn encode_raw_planes_8_bit(&self, width: usize, height: usize, y_plane: &[u8], u_plane: &[u8], v_plane: &[u8], a_plane: Option<&[u8]>, color_pixel_range: PixelRange) -> Result<EncodedImage, Error> {
-    let config = &self.config;
+pub fn encode_raw_planes_8_bit(&self, width: usize, height: usize, planes: impl Iterator<Item=[u8; 3]> + Send, alpha: Option<impl Iterator<Item=u8> + Send>, color_pixel_range: PixelRange) -> Result<EncodedImage, Error> {
+    self.encode_raw_planes(width, height, planes, alpha, color_pixel_range, 8)
+}
 
-    if y_plane.len() < width * height {
-        return Err(Error::TooFewPixels);
-    }
+/// If `config.color_space` is `ColorSpace::YCbCr`, then it takes BT.709 color space. Always 10-bit (values 0-1023).
+///
+/// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
+///
+/// returns AVIF file, size of color metadata, size of alpha metadata overhead
+pub fn encode_raw_planes_10_bit(&self, width: usize, height: usize, planes: impl Iterator<Item=[u16; 3]> + Send, alpha: Option<impl Iterator<Item=u8> + Send>, color_pixel_range: PixelRange) -> Result<EncodedImage, Error> {
+    self.encode_raw_planes(width, height, planes, alpha, color_pixel_range, 10)
+}
+
+fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usize, planes: impl Iterator<Item=[P; 3]> + Send, alpha: Option<impl Iterator<Item=u8> + Send>, color_pixel_range: PixelRange, bit_depth: u8) -> Result<EncodedImage, Error> {
+    let config = &self.config;
 
     // quality setting
     let quantizer = quality_to_quantizer(config.quality);
@@ -324,28 +321,28 @@ pub fn encode_raw_planes_8_bit(&self, width: usize, height: usize, y_plane: &[u8
         if threads > 0 { threads } else { rayon::current_num_threads() }
     });
 
-    let encode_color = move || encode_to_av1(&Av1EncodeConfig {
+    let encode_color = move || encode_to_av1::<P>(&Av1EncodeConfig {
         width,
         height,
-        planes: &[y_plane, u_plane, v_plane],
+        bit_depth: bit_depth.into(),
         quantizer,
         speed: SpeedTweaks::from_my_preset(config.speed, config.quality as _),
         threads,
         pixel_range: color_pixel_range,
         chroma_sampling: ChromaSampling::Cs444,
         color_description,
-    });
-    let encode_alpha = move || a_plane.map(|a| encode_to_av1(&Av1EncodeConfig {
+    }, move |frame| init_frame_3(width, height, planes, frame));
+    let encode_alpha = move || alpha.map(|alpha| encode_to_av1::<u8>(&Av1EncodeConfig {
         width,
         height,
-        planes: &[a],
+        bit_depth: 8,
         quantizer: alpha_quantizer,
         speed: SpeedTweaks::from_my_preset(config.speed, config.alpha_quality as _),
         threads,
         pixel_range: PixelRange::Full,
         chroma_sampling: ChromaSampling::Cs400,
         color_description: None,
-    }));
+    }, |frame| init_frame_1(width, height, alpha, frame)));
     #[cfg(all(target_arch="wasm32", not(target_feature = "atomics")))]
     let (color, alpha) = (encode_color(), encode_alpha());
     #[cfg(not(all(target_arch="wasm32", not(target_feature = "atomics"))))]
@@ -354,7 +351,7 @@ pub fn encode_raw_planes_8_bit(&self, width: usize, height: usize, y_plane: &[u8
 
     let avif_file = avif_serialize::Aviffy::new()
         .premultiplied_alpha(config.premultiplied_alpha)
-        .to_vec(&color, alpha.as_deref(), width as u32, height as u32, 8);
+        .to_vec(&color, alpha.as_deref(), width as u32, height as u32, bit_depth);
     let color_byte_size = color.len();
     let alpha_byte_size = alpha.as_ref().map_or(0, |a| a.len());
 
@@ -362,6 +359,40 @@ pub fn encode_raw_planes_8_bit(&self, width: usize, height: usize, y_plane: &[u8
         avif_file, color_byte_size, alpha_byte_size,
     })
 }
+}
+
+#[inline(always)]
+fn rgb_to_10_bit_gbr(px: rgb::RGB<u8>) -> (u16, u16, u16) {
+    fn to_ten(x: u8) -> u16 {
+        ((x as u16) << 2) | ((x as u16) >> 6)
+    }
+    (to_ten(px.g), to_ten(px.b), to_ten(px.r))
+}
+
+#[inline(always)]
+fn rgb_to_8_bit_gbr(px: rgb::RGB<u8>) -> (u8, u8, u8) {
+    (px.g, px.b, px.r)
+}
+
+#[inline(always)]
+fn rgb_to_ycbcr(px: rgb::RGB<u8>, depth: u8) -> (f32, f32, f32) {
+    let max_value = ((1<<depth)-1) as f32;
+    let scale = max_value/255.;
+    let shift = (max_value * 0.5).round();
+    let y  = scale * 0.2126 * f32::from(px.r) + scale * 0.7152 * f32::from(px.g) + scale * 0.0722 * f32::from(px.b);
+    let cb = (f32::from(px.b) * scale - y) * (0.5/(1.-0.0722));
+    let cr = (f32::from(px.r) * scale - y) * (0.5/(1.-0.2126));
+    (y.round(), (cb + shift).round(), (cr + shift).round())
+}
+
+fn rgb_to_10_bit_ycbcr(px: rgb::RGB<u8>) -> (u16, u16, u16) {
+    let (y, u, v) = rgb_to_ycbcr(px, 10);
+    (y as u16, u as u16, v as u16)
+}
+
+fn rgb_to_8_bit_ycbcr(px: rgb::RGB<u8>) -> (u8, u8, u8) {
+    let (y, u, v) = rgb_to_ycbcr(px, 8);
+    (y as u8, u as u8, v as u8)
 }
 
 fn quality_to_quantizer(quality: f32) -> usize {
@@ -485,10 +516,10 @@ impl SpeedTweaks {
     }
 }
 
-struct Av1EncodeConfig<'a> {
+struct Av1EncodeConfig {
     pub width: usize,
     pub height: usize,
-    pub planes: &'a [&'a [u8]],
+    pub bit_depth: usize,
     pub quantizer: usize,
     pub speed: SpeedTweaks,
     /// 0 means num_cpus
@@ -498,23 +529,21 @@ struct Av1EncodeConfig<'a> {
     pub color_description: Option<ColorDescription>,
 }
 
-fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Error> {
+fn rav1e_config(p: &Av1EncodeConfig) -> Config {
     // AV1 needs all the CPU power you can give it,
     // except when it'd create inefficiently tiny tiles
     let tiles = {
         let threads = p.threads.unwrap_or_else(rayon::current_num_threads);
         threads.min((p.width * p.height) / (p.speed.min_tile_size as usize).pow(2))
     };
-    let bit_depth = 8;
-
     let speed_settings = p.speed.speed_settings();
-    let mut cfg = Config::new()
+    let cfg = Config::new()
         .with_encoder_config(EncoderConfig {
         width: p.width,
         height: p.height,
         time_base: Rational::new(1, 1),
         sample_aspect_ratio: Rational::new(1, 1),
-        bit_depth,
+        bit_depth: p.bit_depth,
         chroma_sampling: p.chroma_sampling,
         chroma_sample_position: ChromaSamplePosition::Unknown,
         pixel_range: p.pixel_range,
@@ -542,16 +571,51 @@ fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Error> {
     });
 
     if let Some(threads) = p.threads {
-        cfg = cfg.with_threads(threads);
+        cfg.with_threads(threads)
+    } else {
+        cfg
     }
+}
 
-    let mut ctx: Context<u8> = cfg.new_context()?;
+fn init_frame_3<P: rav1e::Pixel + Default>(width: usize, height: usize, mut planes: impl Iterator<Item=[P; 3]> + Send, frame: &mut Frame<P>) -> Result<(), Error> {
+    let mut f = frame.planes.iter_mut();
+
+    // it doesn't seem to be necessary to fill padding area
+    let mut y = f.next().unwrap().mut_slice(Default::default());
+    let mut u = f.next().unwrap().mut_slice(Default::default());
+    let mut v = f.next().unwrap().mut_slice(Default::default());
+
+    for ((y, u), v) in y.rows_iter_mut().zip(u.rows_iter_mut()).zip(v.rows_iter_mut()).take(height) {
+        let y = &mut y[..width];
+        let u = &mut u[..width];
+        let v = &mut v[..width];
+        for ((y, u), v) in y.iter_mut().zip(u).zip(v) {
+            let px = planes.next().ok_or(Error::TooFewPixels)?;
+            *y = px[0];
+            *u = px[1];
+            *v = px[2];
+        }
+    }
+    Ok(())
+}
+
+fn init_frame_1<P: rav1e::Pixel + Default>(width: usize, height: usize, mut planes: impl Iterator<Item=P> + Send, frame: &mut Frame<P>) -> Result<(), Error> {
+    let mut y = frame.planes[0].mut_slice(Default::default());
+
+    for y in y.rows_iter_mut().take(height) {
+        let y = &mut y[..width];
+        for y in y.iter_mut() {
+            *y = planes.next().ok_or(Error::TooFewPixels)?;
+        }
+    }
+    Ok(())
+}
+
+fn encode_to_av1<P: rav1e::Pixel>(p: &Av1EncodeConfig, init: impl FnOnce(&mut Frame<P>) -> Result<(), Error>) -> Result<Vec<u8>, Error> {
+    let mut ctx: Context<P> = rav1e_config(p).new_context()?;
     let mut frame = ctx.new_frame();
 
-    for (dst, src) in frame.planes.iter_mut().zip(p.planes) {
-        dst.copy_from_raw_u8(src, p.width, (bit_depth + 7) / 8);
-    }
-
+    init(&mut frame)?;
     ctx.send_frame(frame)?;
     ctx.flush();
 
@@ -574,21 +638,17 @@ fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Error> {
 
 #[deprecated(note = "use Encoder::new().encode_rgba(…)")]
 #[cold]
+#[doc(hidden)]
 pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
-    let res = Encoder { config: *config, high_bit_depth: false, alpha_color_mode: AlphaColorMode::UnassociatedDirty }.encode_rgba(buffer)?;
+    let res = Encoder { config: *config, alpha_color_mode: AlphaColorMode::UnassociatedDirty }.encode_rgba_into_8_bit(buffer)?;
     Ok((res.avif_file, res.color_byte_size, res.alpha_byte_size))
 }
 
 #[deprecated(note = "use Encoder::new().encode_rgb(…)")]
 #[cold]
+#[doc(hidden)]
 pub fn encode_rgb(buffer: Img<&[RGB8]>, config: &EncConfig) -> Result<(Vec<u8>, usize), Box<dyn std::error::Error + Send + Sync>> {
-    let res = Encoder { config: *config, high_bit_depth: false, alpha_color_mode: AlphaColorMode::UnassociatedDirty }.encode_rgb(buffer)?;
+    let res = Encoder { config: *config, alpha_color_mode: AlphaColorMode::UnassociatedDirty }.encode_rgb(buffer)?;
     Ok((res.avif_file, res.color_byte_size))
 }
 
-#[deprecated(note = "use Encoder::new().encode_raw_planes(…)")]
-#[cold]
-pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &[u8], v_plane: &[u8], a_plane: Option<&[u8]>, color_pixel_range: PixelRange, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
-    let res = Encoder { config: *config, high_bit_depth: false, alpha_color_mode: AlphaColorMode::UnassociatedDirty }.encode_raw_planes_8_bit(width, height, y_plane, u_plane, v_plane, a_plane, color_pixel_range)?;
-    Ok((res.avif_file, res.color_byte_size, res.alpha_byte_size))
-}

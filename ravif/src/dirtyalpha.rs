@@ -17,12 +17,6 @@ fn weighed_pixel(px: RGBA8) -> (u16, RGB<u32>) {
 }
 
 /// Clear/change RGB components of fully-transparent RGBA pixels to make them cheaper to encode with AV1
-#[deprecated(note = "use Encoder::with_color_alpha_mode(_::UnassociatedClean) instead")]
-#[cold]
-pub fn cleared_alpha(img: Img<Vec<RGBA8>>) -> Img<Vec<RGBA8>> {
-    blurred_dirty_alpha(img.as_ref()).unwrap_or(img)
-}
-
 pub(crate) fn blurred_dirty_alpha(img: ImgRef<RGBA8>) -> Option<Img<Vec<RGBA8>>> {
     // get dominant visible transparent color (excluding opaque pixels)
     let mut sum = RGB::new(0, 0, 0);
