@@ -9,11 +9,11 @@ fn weighed_pixel(px: RGBA8) -> (u16, RGB<u32>) {
     if px.a == 0 {
         return (0, RGB::new(0,0,0))
     }
-    let weight = 256 - px.a as u16;
+    let weight = 256 - u16::from(px.a);
     (weight, RGB::new(
-        px.r as u32 * weight as u32,
-        px.g as u32 * weight as u32,
-        px.b as u32 * weight as u32))
+        u32::from(px.r) * u32::from(weight),
+        u32::from(px.g) * u32::from(weight),
+        u32::from(px.b) * u32::from(weight)))
 }
 
 /// Clear/change RGB components of fully-transparent RGBA pixels to make them cheaper to encode with AV1
@@ -36,8 +36,8 @@ pub(crate) fn blurred_dirty_alpha(img: ImgRef<RGBA8>) -> Option<Img<Vec<RGBA8>>>
         }
         if chain(&top, &mid, &bot).any(|px| px.a == 0) {
             let (w, px) = weighed_pixel(mid.curr);
-            weights += w as u64;
-            sum += px.map(|c| c as u64);
+            weights += u64::from(w);
+            sum += px.map(u64::from);
         }
     });
     if weights == 0 {
@@ -60,7 +60,7 @@ fn bleed_opaque_color(img: ImgRef<RGBA8>, bg: RGBA8) -> Img<Vec<RGBA8>> {
             let (weights, sum) = chain(&top, &mid, &bot)
                 .map(|c| weighed_pixel(*c))
                 .fold((0u32, RGB::new(0,0,0)), |mut sum, item| {
-                    sum.0 += item.0 as u32;
+                    sum.0 += u32::from(item.0);
                     sum.1 += item.1;
                     sum
                 });
@@ -92,7 +92,7 @@ fn blur_transparent_pixels(img: ImgRef<RGBA8>) -> Img<Vec<RGBA8>> {
             mid.curr
         } else {
             let sum: RGB<u16> =
-                chain(&top, &mid, &bot).map(|px| px.rgb().map(|c| c as u16)).sum();
+                chain(&top, &mid, &bot).map(|px| px.rgb().map(u16::from)).sum();
             let mut avg = sum.map(|c| (c / 9) as u8);
             if mid.curr.a == 0 {
                 avg.alpha(0)
@@ -123,8 +123,8 @@ fn clamp(px: u8, (min, max): (u8, u8)) -> u8 {
 /// (mostly-transparent colors tolerate more variation)
 #[inline]
 fn premultiplied_minmax(px: u8, alpha: u8) -> (u8, u8) {
-    let alpha = alpha as u16;
-    let rounded = (px as u16) * alpha / 255 * 255;
+    let alpha = u16::from(alpha);
+    let rounded = u16::from(px) * alpha / 255 * 255;
 
     // leave some spare room for rounding
     let low = ((rounded + 16) / alpha) as u8;

@@ -62,6 +62,7 @@ pub struct Encoder {
 /// Builder methods
 impl Encoder {
     /// Start here
+    #[must_use]
     pub fn new() -> Self {
         Self {
             config: EncConfig {
@@ -80,6 +81,7 @@ impl Encoder {
     /// Quality 1..=100. Panics if out of range.
     #[inline(always)]
     #[track_caller]
+    #[must_use]
     pub fn with_quality(mut self, quality: f32) -> Self {
         assert!(quality >= 1. && quality <= 100.);
         self.config.quality = quality;
@@ -89,6 +91,7 @@ impl Encoder {
     /// Quality for the alpha channel only. 1..=100. Panics if out of range.
     #[inline(always)]
     #[track_caller]
+    #[must_use]
     pub fn with_alpha_quality(mut self, quality: f32) -> Self {
         assert!(quality >= 1. && quality <= 100.);
         self.config.alpha_quality = quality;
@@ -99,6 +102,7 @@ impl Encoder {
     /// 10 = quick, but larger file sizes and lower quality.
     #[inline(always)]
     #[track_caller]
+    #[must_use]
     pub fn with_speed(mut self, speed: u8) -> Self {
         assert!(speed >= 1 && speed <= 10);
         self.config.speed = speed;
@@ -110,6 +114,7 @@ impl Encoder {
     /// Note that this is only internal detail for the AVIF file, and doesn't
     /// change color space of inputs to encode functions.
     #[inline(always)]
+    #[must_use]
     pub fn with_internal_color_space(mut self, color_space: ColorSpace) -> Self {
         self.config.color_space = color_space;
         self
@@ -117,6 +122,7 @@ impl Encoder {
 
     /// Store color channels using 10-bit depth instead of the default 8-bit.
     #[inline(always)]
+    #[must_use]
     pub fn with_internal_10_bit_depth(mut self, high_bit_depth: bool) -> Self {
         self.high_bit_depth = high_bit_depth;
         self
@@ -126,6 +132,7 @@ impl Encoder {
     /// The default `None` is to use all threads in the default `rayon` thread pool.
     #[inline(always)]
     #[track_caller]
+    #[must_use]
     pub fn with_num_threads(mut self, num_threads: Option<usize>) -> Self {
         assert!(num_threads.map_or(true, |n| n > 0));
         self.config.threads = num_threads;
@@ -134,6 +141,7 @@ impl Encoder {
 
     /// Configure handling of color channels in transparent images
     #[inline(always)]
+    #[must_use]
     pub fn with_alpha_color_mode(mut self, mode: AlphaColorMode) -> Self {
         self.alpha_color_mode = mode;
         self.config.premultiplied_alpha = mode == AlphaColorMode::Premultiplied;
@@ -198,9 +206,9 @@ pub fn encode_rgba(&self, in_buffer: Img<&[RGBA8]>) -> Result<EncodedImage, Erro
             let prem = in_buffer.pixels()
                 .filter(|px| px.a != 255)
                 .map(|px| if px.a == 0 { RGBA8::default() } else { RGBA8::new(
-                    (px.r as u16 * 255 / px.a as u16) as u8,
-                    (px.r as u16 * 255 / px.a as u16) as u8,
-                    (px.r as u16 * 255 / px.a as u16) as u8,
+                    (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
+                    (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
+                    (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
                     px.a,
                 )})
                 .collect();
@@ -218,9 +226,9 @@ pub fn encode_rgba(&self, in_buffer: Img<&[RGBA8]>) -> Result<EncodedImage, Erro
     for px in buffer.pixels() {
         let (y,u,v) = match self.config.color_space {
             ColorSpace::YCbCr => {
-                let y  = 0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32;
-                let cb = (px.b as f32 - y) * (0.5/(1.-0.0722));
-                let cr = (px.r as f32 - y) * (0.5/(1.-0.2126));
+                let y  = 0.2126 * f32::from(px.r) + 0.7152 * f32::from(px.g) + 0.0722 * f32::from(px.b);
+                let cb = (f32::from(px.b) - y) * (0.5/(1.-0.0722));
+                let cr = (f32::from(px.r) - y) * (0.5/(1.-0.2126));
 
                 (y.round() as u8, (cb + 128.).round() as u8, (cr + 128.).round() as u8)
             },
@@ -265,9 +273,9 @@ pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
     for px in buffer.pixels() {
         let (y,u,v) = match self.config.color_space {
             ColorSpace::YCbCr => {
-                let y  = 0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32;
-                let cb = (px.b as f32 - y) * (0.5/(1.-0.0722));
-                let cr = (px.r as f32 - y) * (0.5/(1.-0.2126));
+                let y  = 0.2126 * f32::from(px.r) + 0.7152 * f32::from(px.g) + 0.0722 * f32::from(px.b);
+                let cb = (f32::from(px.b) - y) * (0.5/(1.-0.0722));
+                let cr = (f32::from(px.r) - y) * (0.5/(1.-0.2126));
 
                 (y.round() as u8, (cb + 128.).round() as u8, (cr + 128.).round() as u8)
             },
@@ -285,7 +293,7 @@ pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
     self.encode_raw_planes_8_bit(width, height, &y_plane, &u_plane, &v_plane, None, color_pixel_range)
 }
 
-/// If config.color_space is ColorSpace::YCbCr, then it takes 8-bit BT.709 color space.
+/// If `config.color_space` is `ColorSpace::YCbCr`, then it takes 8-bit BT.709 color space.
 ///
 /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
 ///
@@ -359,12 +367,11 @@ pub fn encode_raw_planes_8_bit(&self, width: usize, height: usize, y_plane: &[u8
 }
 
 fn quality_to_quantizer(quality: f32) -> usize {
-    ((1.-quality/100.) * 255.).round().max(0.).min(255.) as usize
+    ((1. - quality / 100.) * 255.).round().max(0.).min(255.) as usize
 }
 
-
 #[derive(Debug, Copy, Clone)]
-pub struct SpeedTweaks {
+struct SpeedTweaks {
     pub speed_preset: u8,
 
     pub fast_deblock: Option<bool>,
@@ -442,7 +449,6 @@ impl SpeedTweaks {
     }
 
     pub(crate) fn speed_settings(&self) -> SpeedSettings {
-
         let mut speed_settings = SpeedSettings::from_preset(self.speed_preset.into());
 
         speed_settings.multiref = false;
@@ -473,7 +479,7 @@ impl SpeedTweaks {
                     32 => BlockSize::BLOCK_32X32,
                     64 => BlockSize::BLOCK_64X64,
                     128 => BlockSize::BLOCK_128X128,
-                    _ => panic!("bad size {}", s),
+                    _ => panic!("bad size {s}"),
                 }
             }
             speed_settings.partition_range = PartitionRange::new(sz(min), sz(max));
@@ -483,7 +489,7 @@ impl SpeedTweaks {
     }
 }
 
-pub(crate) struct Av1EncodeConfig<'a> {
+struct Av1EncodeConfig<'a> {
     pub width: usize,
     pub height: usize,
     pub planes: &'a [&'a [u8]],
@@ -546,7 +552,7 @@ fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Error> {
     let mut frame = ctx.new_frame();
 
     for (dst, src) in frame.planes.iter_mut().zip(p.planes) {
-        dst.copy_from_raw_u8(src, p.width, (bit_depth+7)/8);
+        dst.copy_from_raw_u8(src, p.width, (bit_depth + 7) / 8);
     }
 
     ctx.send_frame(frame)?;
