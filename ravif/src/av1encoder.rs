@@ -381,7 +381,6 @@ struct SpeedTweaks {
     pub cdef: Option<bool>,
     /// loop restoration filter
     pub lrf: Option<bool>,
-    pub non_square_partition: Option<bool>,
     pub sgr_complexity_full: Option<bool>,
     pub use_satd_subpel: Option<bool>,
     pub inter_tx_split: Option<bool>,
@@ -415,7 +414,6 @@ impl SpeedTweaks {
             encode_bottomup: Some(speed <= 2), // may be costly (+60%), may even backfire
 
             // big blocks disabled at 3
-            non_square_partition: Some(speed <= 3), // doesn't seem to do anything?
 
             // these two are together?
             rdo_tx_decision: Some(speed <= 4 && !high_quality), // it tends to blur subtle textures
@@ -447,26 +445,26 @@ impl SpeedTweaks {
     }
 
     pub(crate) fn speed_settings(&self) -> SpeedSettings {
-        let mut speed_settings = SpeedSettings::from_preset(self.speed_preset.into());
+        let mut speed_settings = SpeedSettings::from_preset(self.speed_preset);
 
         speed_settings.multiref = false;
-        speed_settings.no_scene_detection = true;
-        speed_settings.include_near_mvs = false;
+        speed_settings.rdo_lookahead_frames = 1;
+        speed_settings.scene_detection_mode = SceneDetectionSpeed::None;
+        speed_settings.motion.include_near_mvs = false;
 
         if let Some(v) = self.fast_deblock { speed_settings.fast_deblock = v; }
-        if let Some(v) = self.reduced_tx_set { speed_settings.reduced_tx_set = v; }
-        if let Some(v) = self.tx_domain_distortion { speed_settings.tx_domain_distortion = v; }
-        if let Some(v) = self.tx_domain_rate { speed_settings.tx_domain_rate = v; }
-        if let Some(v) = self.encode_bottomup { speed_settings.encode_bottomup = v; }
-        if let Some(v) = self.rdo_tx_decision { speed_settings.rdo_tx_decision = v; }
+        if let Some(v) = self.reduced_tx_set { speed_settings.transform.reduced_tx_set = v; }
+        if let Some(v) = self.tx_domain_distortion { speed_settings.transform.tx_domain_distortion = v; }
+        if let Some(v) = self.tx_domain_rate { speed_settings.transform.tx_domain_rate = v; }
+        if let Some(v) = self.encode_bottomup { speed_settings.partition.encode_bottomup = v; }
+        if let Some(v) = self.rdo_tx_decision { speed_settings.transform.rdo_tx_decision = v; }
         if let Some(v) = self.cdef { speed_settings.cdef = v; }
         if let Some(v) = self.lrf { speed_settings.lrf = v; }
-        if let Some(v) = self.inter_tx_split { speed_settings.enable_inter_tx_split = v; }
-        if let Some(v) = self.non_square_partition { speed_settings.non_square_partition = v; }
+        if let Some(v) = self.inter_tx_split { speed_settings.transform.enable_inter_tx_split = v; }
         if let Some(v) = self.sgr_complexity_full { speed_settings.sgr_complexity = if v { SGRComplexityLevel::Full } else { SGRComplexityLevel::Reduced } };
-        if let Some(v) = self.use_satd_subpel { speed_settings.use_satd_subpel = v; }
-        if let Some(v) = self.fine_directional_intra { speed_settings.fine_directional_intra = v; }
-        if let Some(v) = self.complex_prediction_modes { speed_settings.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple} };
+        if let Some(v) = self.use_satd_subpel { speed_settings.motion.use_satd_subpel = v; }
+        if let Some(v) = self.fine_directional_intra { speed_settings.prediction.fine_directional_intra = v; }
+        if let Some(v) = self.complex_prediction_modes { speed_settings.prediction.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple} };
         if let Some((min, max)) = self.partition_range {
             assert!(min <= max);
             fn sz(s: u8) -> BlockSize {
@@ -480,7 +478,7 @@ impl SpeedTweaks {
                     _ => panic!("bad size {s}"),
                 }
             }
-            speed_settings.partition_range = PartitionRange::new(sz(min), sz(max));
+            speed_settings.partition.partition_range = PartitionRange::new(sz(min), sz(max));
         }
 
         speed_settings
@@ -538,7 +536,8 @@ fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Error> {
         tile_cols: 0,
         tile_rows: 0,
         tiles,
-        rdo_lookahead_frames: 1,
+        film_grain_params: None,
+        level_idx: None,
         speed_settings,
     });
 
