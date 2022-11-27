@@ -1,6 +1,7 @@
 use load_image::export::rgb::ComponentMap;
 use clap::{Arg, Command, AppSettings};
 use imgref::ImgVec;
+use ravif::{AlphaColorMode, ColorSpace, Encoder, EncodedImage, RGBA8};
 use rayon::prelude::*;
 use std::fs;
 use std::io::Read;
@@ -9,8 +10,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
-
-use ravif::{ColorSpace, Encoder, EncodedImage, RGBA8, cleared_alpha};
 
 fn main() {
     if let Err(e) = run() {
@@ -146,7 +145,7 @@ fn run() -> Result<(), BoxError> {
     };
 
     let process = move |data: Vec<u8>, input_path: &MaybePath| -> Result<(), BoxError> {
-        let mut img = load_rgba(&data, false)?;
+        let img = load_rgba(&data, false)?;
         drop(data);
         let out_path = match (&output, input_path) {
             (None, MaybePath::Path(input)) => MaybePath::Path(input.with_extension("avif")),
@@ -167,14 +166,12 @@ fn run() -> Result<(), BoxError> {
             },
             _ => {},
         }
-        if !dirty_alpha {
-            img = cleared_alpha(img);
-        }
         let enc = Encoder::new()
             .with_quality(quality)
             .with_speed(speed)
             .with_alpha_quality(alpha_quality)
             .with_internal_color_space(color_space)
+            .with_alpha_color_mode(if dirty_alpha { AlphaColorMode::UnassociatedDirty } else { AlphaColorMode::UnassociatedClean })
             .with_num_threads(Some(threads).filter(|&n| n > 0));
         let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc.encode_rgba(img.as_ref())?;
         match out_path {

@@ -1,6 +1,8 @@
 #![allow(deprecated)]
+use crate::dirtyalpha::blurred_dirty_alpha;
 use crate::error::Error;
 use imgref::Img;
+use imgref::ImgVec;
 use rav1e::prelude::*;
 use rgb::RGB8;
 use rgb::RGBA8;
@@ -15,6 +17,24 @@ pub enum ColorSpace {
     /// Usually results in larger file sizes, and is less compatible than `YCbCr`.
     /// Use only if the content really makes use of RGB, e.g. anaglyph images or RGB subpixel anti-aliasing.
     RGB,
+}
+
+/// Handling of color channels in transparent images. For [`Encoder::with_alpha_color_mode`]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum AlphaColorMode {
+    /// Use unassociated alpha channel and leave color channels unchanged, even if there's redundant color data in transparent areas.
+    UnassociatedDirty,
+    /// Use unassociated alpha channel, but set color channels of transparent areas to a solid color to eliminate invisible data and improve compression.
+    UnassociatedClean,
+    /// Store color channels of transparent images in premultiplied form.
+    /// This requires support for premultiplied alpha in AVIF decoders.
+    ///
+    /// It may reduce file sizes due to clearing of fully-transparent pixels, but
+    /// may also increase file sizes due to creation of new edges in the color channels.
+    ///
+    /// Note that this is only internal detail for the AVIF file.
+    /// It does not change meaning of `RGBA` in this library — it's always unassociated.
+    Premultiplied,
 }
 
 /// The image file + extra info
@@ -35,6 +55,8 @@ pub struct Encoder {
     config: EncConfig,
     /// `false` uses 8 bits, `true` uses 10 bits
     high_bit_depth: bool,
+    /// [`AlphaColorMode`]
+    alpha_color_mode: AlphaColorMode,
 }
 
 /// Builder methods
@@ -51,6 +73,7 @@ impl Encoder {
                 threads: None,
             },
             high_bit_depth: false,
+            alpha_color_mode: AlphaColorMode::UnassociatedClean,
         }
     }
 
@@ -108,6 +131,14 @@ impl Encoder {
         self.config.threads = num_threads;
         self
     }
+
+    /// Configure handling of color channels in transparent images
+    #[inline(always)]
+    pub fn with_alpha_color_mode(mut self, mode: AlphaColorMode) -> Self {
+        self.alpha_color_mode = mode;
+        self.config.premultiplied_alpha = mode == AlphaColorMode::Premultiplied;
+        self
+    }
 }
 
 /// Use [`Encoder::new`] instead.
@@ -151,7 +182,33 @@ impl Encoder {
 /// It's highly recommended to apply [`cleared_alpha`](crate::cleared_alpha) first.
 ///
 /// returns AVIF file, size of color metadata, size of alpha metadata overhead
-pub fn encode_rgba(&self, buffer: Img<&[RGBA8]>) -> Result<EncodedImage, Error> {
+pub fn encode_rgba(&self, in_buffer: Img<&[RGBA8]>) -> Result<EncodedImage, Error> {
+    let tmp;
+    let buffer = match self.alpha_color_mode {
+        AlphaColorMode::UnassociatedDirty => in_buffer,
+        AlphaColorMode::UnassociatedClean => {
+            if let Some(new) = blurred_dirty_alpha(in_buffer) {
+                tmp = new;
+                tmp.as_ref()
+            } else {
+                in_buffer
+            }
+        },
+        AlphaColorMode::Premultiplied => {
+            let prem = in_buffer.pixels()
+                .filter(|px| px.a != 255)
+                .map(|px| if px.a == 0 { RGBA8::default() } else { RGBA8::new(
+                    (px.r as u16 * 255 / px.a as u16) as u8,
+                    (px.r as u16 * 255 / px.a as u16) as u8,
+                    (px.r as u16 * 255 / px.a as u16) as u8,
+                    px.a,
+                )})
+                .collect();
+            tmp = ImgVec::new(prem, in_buffer.width(), in_buffer.height());
+            tmp.as_ref()
+        },
+    };
+
     let width = buffer.width();
     let height = buffer.height();
     let mut y_plane = Vec::with_capacity(width*height);
@@ -515,20 +572,20 @@ fn encode_to_av1(p: &Av1EncodeConfig<'_>) -> Result<Vec<u8>, Error> {
 #[deprecated(note = "use Encoder::new().encode_rgba(…)")]
 #[cold]
 pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
-    let res = Encoder { config: *config, high_bit_depth: false }.encode_rgba(buffer)?;
+    let res = Encoder { config: *config, high_bit_depth: false, alpha_color_mode: AlphaColorMode::UnassociatedDirty }.encode_rgba(buffer)?;
     Ok((res.avif_file, res.color_byte_size, res.alpha_byte_size))
 }
 
 #[deprecated(note = "use Encoder::new().encode_rgb(…)")]
 #[cold]
 pub fn encode_rgb(buffer: Img<&[RGB8]>, config: &EncConfig) -> Result<(Vec<u8>, usize), Box<dyn std::error::Error + Send + Sync>> {
-    let res = Encoder { config: *config, high_bit_depth: false }.encode_rgb(buffer)?;
+    let res = Encoder { config: *config, high_bit_depth: false, alpha_color_mode: AlphaColorMode::UnassociatedDirty }.encode_rgb(buffer)?;
     Ok((res.avif_file, res.color_byte_size))
 }
 
 #[deprecated(note = "use Encoder::new().encode_raw_planes(…)")]
 #[cold]
 pub fn encode_raw_planes(width: usize, height: usize, y_plane: &[u8], u_plane: &[u8], v_plane: &[u8], a_plane: Option<&[u8]>, color_pixel_range: PixelRange, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
-    let res = Encoder { config: *config, high_bit_depth: false }.encode_raw_planes_8_bit(width, height, y_plane, u_plane, v_plane, a_plane, color_pixel_range)?;
+    let res = Encoder { config: *config, high_bit_depth: false, alpha_color_mode: AlphaColorMode::UnassociatedDirty }.encode_raw_planes_8_bit(width, height, y_plane, u_plane, v_plane, a_plane, color_pixel_range)?;
     Ok((res.avif_file, res.color_byte_size, res.alpha_byte_size))
 }

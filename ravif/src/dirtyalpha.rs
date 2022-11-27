@@ -17,14 +17,20 @@ fn weighed_pixel(px: RGBA8) -> (u16, RGB<u32>) {
 }
 
 /// Clear/change RGB components of fully-transparent RGBA pixels to make them cheaper to encode with AV1
-pub fn cleared_alpha(mut img: Img<Vec<RGBA8>>) -> Img<Vec<RGBA8>> {
+#[deprecated(note = "use Encoder::with_color_alpha_mode(_::UnassociatedClean) instead")]
+#[cold]
+pub fn cleared_alpha(img: Img<Vec<RGBA8>>) -> Img<Vec<RGBA8>> {
+    blurred_dirty_alpha(img.as_ref()).unwrap_or(img)
+}
+
+pub(crate) fn blurred_dirty_alpha(img: ImgRef<RGBA8>) -> Option<Img<Vec<RGBA8>>> {
     // get dominant visible transparent color (excluding opaque pixels)
     let mut sum = RGB::new(0, 0, 0);
     let mut weights = 0;
 
     // Only consider colors around transparent images
     // (e.g. solid semitransparent area doesn't need to contribute)
-    loop9::loop9_img(img.as_ref(), |_, _, top, mid, bot| {
+    loop9::loop9_img(img, |_, _, top, mid, bot| {
         if mid.curr.a == 255 || mid.curr.a == 0 {
             return;
         }
@@ -35,19 +41,17 @@ pub fn cleared_alpha(mut img: Img<Vec<RGBA8>>) -> Img<Vec<RGBA8>> {
         }
     });
     if weights == 0 {
-        return img; // opaque image
+        return None; // opaque image
     }
 
     let neutral_alpha = RGBA8::new((sum.r / weights) as u8, (sum.g / weights) as u8, (sum.b / weights) as u8, 0);
-    img.pixels_mut().filter(|px| px.a == 0).for_each(|px| *px = neutral_alpha);
-    let img2 = bleed_opaque_color(img.as_ref());
-    drop(img);
-    blur_transparent_pixels(img2.as_ref())
+    let img2 = bleed_opaque_color(img, neutral_alpha);
+    Some(blur_transparent_pixels(img2.as_ref()))
 }
 
 /// copy color from opaque pixels to transparent pixels
 /// (so that when edges get crushed by compression, the distortion will be away from visible edge)
-fn bleed_opaque_color(img: ImgRef<RGBA8>) -> Img<Vec<RGBA8>> {
+fn bleed_opaque_color(img: ImgRef<RGBA8>, bg: RGBA8) -> Img<Vec<RGBA8>> {
     let mut out = Vec::with_capacity(img.width() * img.height());
     loop9::loop9_img(img, |_, _, top, mid, bot| {
         out.push(if mid.curr.a == 255 {
@@ -60,7 +64,9 @@ fn bleed_opaque_color(img: ImgRef<RGBA8>) -> Img<Vec<RGBA8>> {
                     sum.1 += item.1;
                     sum
                 });
-            if weights != 0 {
+            if weights == 0 {
+                bg
+            } else {
                 let mut avg = sum.map(|c| (c / weights) as u8);
                 if mid.curr.a == 0 {
                     avg.alpha(0)
@@ -72,8 +78,6 @@ fn bleed_opaque_color(img: ImgRef<RGBA8>) -> Img<Vec<RGBA8>> {
                     avg.b = clamp(avg.b, premultiplied_minmax(mid.curr.b, mid.curr.a));
                     avg.alpha(mid.curr.a)
                 }
-            } else {
-                mid.curr
             }
         });
     });
