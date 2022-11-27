@@ -321,10 +321,8 @@ pub fn encode_raw_planes_8_bit(&self, width: usize, height: usize, y_plane: &[u8
     });
 
     let threads = config.threads.map(|threads| {
-        if threads > 0 { threads } else { num_cpus::get() }
+        if threads > 0 { threads } else { rayon::current_num_threads() }
     });
-
-    // Firefox 81 doesn't support Full yet, but doesn't support alpha either
 
     let encode_color = move || encode_to_av1(&Av1EncodeConfig {
         width,
