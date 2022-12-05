@@ -22,6 +22,8 @@ pub use av1encoder::ColorSpace;
 pub use av1encoder::AlphaColorMode;
 pub use av1encoder::Encoder;
 pub use av1encoder::EncodedImage;
+#[doc(inline)]
+pub use rav1e::prelude::MatrixCoefficients;
 
 #[allow(deprecated)]
 pub use av1encoder::EncConfig as Config;
