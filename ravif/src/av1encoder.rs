@@ -76,7 +76,7 @@ impl Encoder {
         }
     }
 
-    /// Quality 1..=100. Panics if out of range.
+    /// Quality `1..=100`. Panics if out of range.
     #[inline(always)]
     #[track_caller]
     #[must_use]
@@ -86,7 +86,7 @@ impl Encoder {
         self
     }
 
-    /// Quality for the alpha channel only. 1..=100. Panics if out of range.
+    /// Quality for the alpha channel only. `1..=100`. Panics if out of range.
     #[inline(always)]
     #[track_caller]
     #[must_use]
@@ -96,7 +96,7 @@ impl Encoder {
         self
     }
 
-    /// 1..=10. 1 = very very slow, but max compression.
+    /// `1..=10`. 1 = very very slow, but max compression.
     /// 10 = quick, but larger file sizes and lower quality.
     #[inline(always)]
     #[track_caller]
@@ -240,7 +240,7 @@ impl Encoder {
 ///
 /// ```rust,ignore
 /// use rgb::ComponentSlice;
-/// let pixels_rgba = pixels_u8.as_rgb();
+/// let pixels_rgb = pixels_u8.as_rgb();
 /// ```
 ///
 /// returns AVIF file, size of color metadata
@@ -262,28 +262,34 @@ pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
         ColorSpace::YCbCr => MatrixCoefficients::BT601,
         ColorSpace::RGB => MatrixCoefficients::Identity,
     };
-    self.encode_raw_planes_10_bit(width, height, planes, None::<std::vec::IntoIter<_>>, PixelRange::Full, matrix_coefficients)
+    self.encode_raw_planes_10_bit(width, height, planes, None::<[_; 0]>, PixelRange::Full, matrix_coefficients)
 }
 
-/// If `config.color_space` is `ColorSpace::YCbCr`, then it takes 8-bit BT.709 color space.
+/// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
+/// with sRGB transfer characteristics and color primaries.
 ///
 /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
+/// If there's no alpha, use `None::<[_; 0]>`.
 ///
 /// returns AVIF file, size of color metadata, size of alpha metadata overhead
-pub fn encode_raw_planes_8_bit(&self, width: usize, height: usize, planes: impl Iterator<Item=[u8; 3]> + Send, alpha: Option<impl Iterator<Item=u8> + Send>, color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients) -> Result<EncodedImage, Error> {
+pub fn encode_raw_planes_8_bit(&self, width: usize, height: usize, planes: impl IntoIterator<Item=[u8; 3]> + Send, alpha: Option<impl IntoIterator<Item=u8> + Send>, color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients) -> Result<EncodedImage, Error> {
     self.encode_raw_planes(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 8)
 }
 
-/// If `config.color_space` is `ColorSpace::YCbCr`, then it takes BT.709 color space. Always 10-bit (values 0-1023).
+/// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
+/// with sRGB transfer characteristics and color primaries.
+///
+/// The pixels are 10-bit (values `0.=1023`).
 ///
 /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
+/// If there's no alpha, use `None::<[_; 0]>`.
 ///
 /// returns AVIF file, size of color metadata, size of alpha metadata overhead
-pub fn encode_raw_planes_10_bit(&self, width: usize, height: usize, planes: impl Iterator<Item=[u16; 3]> + Send, alpha: Option<impl Iterator<Item=u16> + Send>, color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients) -> Result<EncodedImage, Error> {
+pub fn encode_raw_planes_10_bit(&self, width: usize, height: usize, planes: impl IntoIterator<Item=[u16; 3]> + Send, alpha: Option<impl IntoIterator<Item=u16> + Send>, color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients) -> Result<EncodedImage, Error> {
     self.encode_raw_planes(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 10)
 }
 
-fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usize, planes: impl Iterator<Item=[P; 3]> + Send, alpha: Option<impl Iterator<Item=P> + Send>, color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients, bit_depth: u8) -> Result<EncodedImage, Error> {
+fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usize, planes: impl IntoIterator<Item=[P; 3]> + Send, alpha: Option<impl IntoIterator<Item=P> + Send>, color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients, bit_depth: u8) -> Result<EncodedImage, Error> {
     let config = &self.config;
 
     // quality setting
@@ -571,8 +577,9 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
     }
 }
 
-fn init_frame_3<P: rav1e::Pixel + Default>(width: usize, height: usize, mut planes: impl Iterator<Item=[P; 3]> + Send, frame: &mut Frame<P>) -> Result<(), Error> {
+fn init_frame_3<P: rav1e::Pixel + Default>(width: usize, height: usize, planes: impl IntoIterator<Item=[P; 3]> + Send, frame: &mut Frame<P>) -> Result<(), Error> {
     let mut f = frame.planes.iter_mut();
+    let mut planes = planes.into_iter();
 
     // it doesn't seem to be necessary to fill padding area
     let mut y = f.next().unwrap().mut_slice(Default::default());
@@ -593,8 +600,9 @@ fn init_frame_3<P: rav1e::Pixel + Default>(width: usize, height: usize, mut plan
     Ok(())
 }
 
-fn init_frame_1<P: rav1e::Pixel + Default>(width: usize, height: usize, mut planes: impl Iterator<Item=P> + Send, frame: &mut Frame<P>) -> Result<(), Error> {
+fn init_frame_1<P: rav1e::Pixel + Default>(width: usize, height: usize, planes: impl IntoIterator<Item=P> + Send, frame: &mut Frame<P>) -> Result<(), Error> {
     let mut y = frame.planes[0].mut_slice(Default::default());
+    let mut planes = planes.into_iter();
 
     for y in y.rows_iter_mut().take(height) {
         let y = &mut y[..width];
