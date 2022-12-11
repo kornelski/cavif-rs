@@ -53,10 +53,10 @@ pub struct EncodedImage {
 /// Encoder config builder
 #[derive(Debug, Clone)]
 pub struct Encoder {
-    /// 0-100 scale
-    quality: f32,
-    /// 0-100 scale
-    alpha_quality: f32,
+    /// 0-255 scale
+    quantizer: u8,
+    /// 0-255 scale
+    alpha_quantizer: u8,
     /// rav1e preset 1 (slow) 10 (fast but crappy)
     speed: u8,
     /// True if RGBA input has already been premultiplied. It inserts appropriate metadata.
@@ -75,8 +75,8 @@ impl Encoder {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            quality: 80.,
-            alpha_quality: 80.,
+            quantizer: quality_to_quantizer(80.),
+            alpha_quantizer: quality_to_quantizer(80.),
             speed: 5,
             premultiplied_alpha: false,
             color_space: ColorSpace::YCbCr,
@@ -91,7 +91,7 @@ impl Encoder {
     #[must_use]
     pub fn with_quality(mut self, quality: f32) -> Self {
         assert!(quality >= 1. && quality <= 100.);
-        self.quality = quality;
+        self.quantizer = quality_to_quantizer(quality);
         self
     }
 
@@ -101,7 +101,7 @@ impl Encoder {
     #[must_use]
     pub fn with_alpha_quality(mut self, quality: f32) -> Self {
         assert!(quality >= 1. && quality <= 100.);
-        self.alpha_quality = quality;
+        self.alpha_quantizer = quality_to_quantizer(quality);
         self
     }
 
@@ -280,11 +280,6 @@ pub fn encode_raw_planes_10_bit(&self, width: usize, height: usize, planes: impl
 }
 
 fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usize, planes: impl IntoIterator<Item=[P; 3]> + Send, alpha: Option<impl IntoIterator<Item=P> + Send>, color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients, bit_depth: u8) -> Result<EncodedImage, Error> {
-
-    // quality setting
-    let quantizer = quality_to_quantizer(self.quality);
-    let alpha_quantizer = quality_to_quantizer(self.alpha_quality);
-
     let color_description = Some(ColorDescription {
         transfer_characteristics: TransferCharacteristics::SRGB,
         color_primaries: ColorPrimaries::BT709, // sRGB-compatible
@@ -299,8 +294,8 @@ fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usi
         width,
         height,
         bit_depth: bit_depth.into(),
-        quantizer,
-        speed: SpeedTweaks::from_my_preset(self.speed, self.quality as _),
+        quantizer: self.quantizer.into(),
+        speed: SpeedTweaks::from_my_preset(self.speed, self.quantizer),
         threads,
         pixel_range: color_pixel_range,
         chroma_sampling: ChromaSampling::Cs444,
@@ -310,8 +305,8 @@ fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usi
         width,
         height,
         bit_depth: bit_depth.into(),
-        quantizer: alpha_quantizer,
-        speed: SpeedTweaks::from_my_preset(self.speed, self.alpha_quality as _),
+        quantizer: self.alpha_quantizer.into(),
+        speed: SpeedTweaks::from_my_preset(self.speed, self.alpha_quantizer),
         threads,
         pixel_range: PixelRange::Full,
         chroma_sampling: ChromaSampling::Cs400,
@@ -384,11 +379,10 @@ fn rgb_to_8_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u8, u8, u8) {
     (y as u8, u as u8, v as u8)
 }
 
-fn quality_to_quantizer(quality: f32) -> usize {
+fn quality_to_quantizer(quality: f32) -> u8 {
     let q = quality / 100.;
     let x = if q >= 0.85 { (1. - q) * 3. } else if q > 0.25 { 1. - 0.125 - q * 0.5 } else { 1. - q };
-
-    (x * 255.).round().max(0.).min(255.) as usize
+    (x * 255.).round() as u8
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -414,9 +408,9 @@ struct SpeedTweaks {
 }
 
 impl SpeedTweaks {
-    pub fn from_my_preset(speed: u8, quality: u8) -> Self {
-        let low_quality = quality < 55;
-        let high_quality = quality > 80;
+    pub fn from_my_preset(speed: u8, quantizer: u8) -> Self {
+        let low_quality = quantizer < quality_to_quantizer(55.);
+        let high_quality = quantizer > quality_to_quantizer(80.);
         let max_block_size = if high_quality { 16 } else { 64 };
 
         Self {
