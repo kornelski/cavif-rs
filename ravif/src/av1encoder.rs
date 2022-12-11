@@ -396,7 +396,10 @@ fn rgb_to_8_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u8, u8, u8) {
 }
 
 fn quality_to_quantizer(quality: f32) -> usize {
-    ((1. - quality / 100.) * 255.).round().max(0.).min(255.) as usize
+    let q = quality / 100.;
+    let x = if q >= 0.85 { (1. - q) * 3. } else if q > 0.25 { 1. - 0.125 - q * 0.5 } else { 1. - q };
+
+    (x * 255.).round().max(0.).min(255.) as usize
 }
 
 #[derive(Debug, Copy, Clone)]
