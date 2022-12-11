@@ -37,7 +37,7 @@ You can also specify multiple images (encoding is multi-threaded, so the more, t
 cavif [OPTIONS] IMAGES...
 ```
 
- * `--quality=n` — Quality from 1 (worst) to 100 (best), the default value is 80. The numbers have different meaning than JPEG's quality scale. [Beware when comparing codecs](https://kornel.ski/faircomparison). There is no lossless compression support.
+ * `--quality=n` — Quality from 1 (worst) to 100 (best), the default value is 80. The numbers are only a rough approximation of JPEG's quality scale. [Beware when comparing codecs](https://kornel.ski/faircomparison). There is no lossless compression support, 100 just gives unreasonably bloated files.
  * `--speed=n` — Encoding speed between 1 (best, but slowest) and 10 (fastest, but a blurry mess), the default value is 4. Speeds 1 and 2 are unbelievably slow, but make files ~3-5% smaller. Speeds 7 and above degrade compression significantly, and are not recommended.
  * `--overwrite` — Replace files if there's `.avif` already. By default the existing files are left untouched.
  * `-o path` — Write images to this path (instead of `same-name.avif`). If multiple input files are specified, it's interpreted as a directory.
