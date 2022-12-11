@@ -53,7 +53,18 @@ pub struct EncodedImage {
 /// Encoder config builder
 #[derive(Debug, Clone)]
 pub struct Encoder {
-    config: EncConfig,
+    /// 0-100 scale
+    quality: f32,
+    /// 0-100 scale
+    alpha_quality: f32,
+    /// rav1e preset 1 (slow) 10 (fast but crappy)
+    speed: u8,
+    /// True if RGBA input has already been premultiplied. It inserts appropriate metadata.
+    premultiplied_alpha: bool,
+    /// Which pixel format to use in AVIF file. RGB tends to give larger files.
+    color_space: ColorSpace,
+    /// How many threads should be used (0 = match core count), None - use global rayon thread pool
+    threads: Option<usize>,
     /// [`AlphaColorMode`]
     alpha_color_mode: AlphaColorMode,
 }
@@ -64,14 +75,12 @@ impl Encoder {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            config: EncConfig {
-                quality: 80.,
-                alpha_quality: 80.,
-                speed: 5,
-                premultiplied_alpha: false,
-                color_space: ColorSpace::YCbCr,
-                threads: None,
-            },
+            quality: 80.,
+            alpha_quality: 80.,
+            speed: 5,
+            premultiplied_alpha: false,
+            color_space: ColorSpace::YCbCr,
+            threads: None,
             alpha_color_mode: AlphaColorMode::UnassociatedClean,
         }
     }
@@ -82,7 +91,7 @@ impl Encoder {
     #[must_use]
     pub fn with_quality(mut self, quality: f32) -> Self {
         assert!(quality >= 1. && quality <= 100.);
-        self.config.quality = quality;
+        self.quality = quality;
         self
     }
 
@@ -92,7 +101,7 @@ impl Encoder {
     #[must_use]
     pub fn with_alpha_quality(mut self, quality: f32) -> Self {
         assert!(quality >= 1. && quality <= 100.);
-        self.config.alpha_quality = quality;
+        self.alpha_quality = quality;
         self
     }
 
@@ -103,7 +112,7 @@ impl Encoder {
     #[must_use]
     pub fn with_speed(mut self, speed: u8) -> Self {
         assert!(speed >= 1 && speed <= 10);
-        self.config.speed = speed;
+        self.speed = speed;
         self
     }
 
@@ -114,7 +123,7 @@ impl Encoder {
     #[inline(always)]
     #[must_use]
     pub fn with_internal_color_space(mut self, color_space: ColorSpace) -> Self {
-        self.config.color_space = color_space;
+        self.color_space = color_space;
         self
     }
 
@@ -125,7 +134,7 @@ impl Encoder {
     #[must_use]
     pub fn with_num_threads(mut self, num_threads: Option<usize>) -> Self {
         assert!(num_threads.map_or(true, |n| n > 0));
-        self.config.threads = num_threads;
+        self.threads = num_threads;
         self
     }
 
@@ -134,28 +143,9 @@ impl Encoder {
     #[must_use]
     pub fn with_alpha_color_mode(mut self, mode: AlphaColorMode) -> Self {
         self.alpha_color_mode = mode;
-        self.config.premultiplied_alpha = mode == AlphaColorMode::Premultiplied;
+        self.premultiplied_alpha = mode == AlphaColorMode::Premultiplied;
         self
     }
-}
-
-/// Use [`Encoder::new`] instead.
-#[deprecated(note = "use Encoder::new()")]
-#[derive(Debug, Copy, Clone)]
-#[doc(hidden)]
-pub struct EncConfig {
-    /// 0-100 scale
-    pub quality: f32,
-    /// 0-100 scale
-    pub alpha_quality: f32,
-    /// rav1e preset 1 (slow) 10 (fast but crappy)
-    pub speed: u8,
-    /// True if RGBA input has already been premultiplied. It inserts appropriate metadata.
-    pub premultiplied_alpha: bool,
-    /// Which pixel format to use in AVIF file. RGB tends to give larger files.
-    pub color_space: ColorSpace,
-    /// How many threads should be used (0 = match core count), None - use global rayon thread pool
-    pub threads: Option<usize>,
 }
 
 /// Once done with config, call one of the `encode_*` functions
@@ -188,7 +178,7 @@ impl Encoder {
         let width = buffer.width();
         let height = buffer.height();
         let planes = buffer.pixels().map(|px| {
-            let (y,u,v) = match self.config.color_space {
+            let (y,u,v) = match self.color_space {
                 ColorSpace::YCbCr => {
                     rgb_to_8_bit_ycbcr(px.rgb(), BT601)
                 },
@@ -200,7 +190,7 @@ impl Encoder {
         });
         let use_alpha = buffer.pixels().any(|px| px.a != 255);
         let alpha = if use_alpha { Some(buffer.pixels().map(|px| px.a)) } else {None};
-        let matrix_coefficients = match self.config.color_space {
+        let matrix_coefficients = match self.color_space {
             ColorSpace::YCbCr => MatrixCoefficients::BT601,
             ColorSpace::RGB => MatrixCoefficients::Identity,
         };
@@ -248,7 +238,7 @@ pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
     let width = buffer.width();
     let height = buffer.height();
     let planes = buffer.pixels().map(|px| {
-        let (y,u,v) = match self.config.color_space {
+        let (y,u,v) = match self.color_space {
             ColorSpace::YCbCr => {
                 rgb_to_10_bit_ycbcr(px, BT601)
             },
@@ -258,7 +248,7 @@ pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
         };
         [y, u, v]
     });
-    let matrix_coefficients = match self.config.color_space {
+    let matrix_coefficients = match self.color_space {
         ColorSpace::YCbCr => MatrixCoefficients::BT601,
         ColorSpace::RGB => MatrixCoefficients::Identity,
     };
@@ -290,11 +280,10 @@ pub fn encode_raw_planes_10_bit(&self, width: usize, height: usize, planes: impl
 }
 
 fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usize, planes: impl IntoIterator<Item=[P; 3]> + Send, alpha: Option<impl IntoIterator<Item=P> + Send>, color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients, bit_depth: u8) -> Result<EncodedImage, Error> {
-    let config = &self.config;
 
     // quality setting
-    let quantizer = quality_to_quantizer(config.quality);
-    let alpha_quantizer = quality_to_quantizer(config.alpha_quality);
+    let quantizer = quality_to_quantizer(self.quality);
+    let alpha_quantizer = quality_to_quantizer(self.alpha_quality);
 
     let color_description = Some(ColorDescription {
         transfer_characteristics: TransferCharacteristics::SRGB,
@@ -302,7 +291,7 @@ fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usi
         matrix_coefficients,
     });
 
-    let threads = config.threads.map(|threads| {
+    let threads = self.threads.map(|threads| {
         if threads > 0 { threads } else { rayon::current_num_threads() }
     });
 
@@ -311,7 +300,7 @@ fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usi
         height,
         bit_depth: bit_depth.into(),
         quantizer,
-        speed: SpeedTweaks::from_my_preset(config.speed, config.quality as _),
+        speed: SpeedTweaks::from_my_preset(self.speed, self.quality as _),
         threads,
         pixel_range: color_pixel_range,
         chroma_sampling: ChromaSampling::Cs444,
@@ -322,7 +311,7 @@ fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usi
         height,
         bit_depth: bit_depth.into(),
         quantizer: alpha_quantizer,
-        speed: SpeedTweaks::from_my_preset(config.speed, config.alpha_quality as _),
+        speed: SpeedTweaks::from_my_preset(self.speed, self.alpha_quality as _),
         threads,
         pixel_range: PixelRange::Full,
         chroma_sampling: ChromaSampling::Cs400,
@@ -345,7 +334,7 @@ fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usi
             MatrixCoefficients::BT2020CL => avif_serialize::constants::MatrixCoefficients::Bt2020Cl,
             _ => return Err(Error::Unsupported("matrix coefficients")),
         })
-        .premultiplied_alpha(config.premultiplied_alpha)
+        .premultiplied_alpha(self.premultiplied_alpha)
         .to_vec(&color, alpha.as_deref(), width as u32, height as u32, bit_depth);
     let color_byte_size = color.len();
     let alpha_byte_size = alpha.as_ref().map_or(0, |a| a.len());
@@ -639,21 +628,5 @@ fn encode_to_av1<P: rav1e::Pixel>(p: &Av1EncodeConfig, init: impl FnOnce(&mut Fr
         }
     }
     Ok(out)
-}
-
-#[deprecated(note = "use Encoder::new().encode_rgba(…)")]
-#[cold]
-#[doc(hidden)]
-pub fn encode_rgba(buffer: Img<&[RGBA8]>, config: &EncConfig) -> Result<(Vec<u8>, usize, usize), Box<dyn std::error::Error + Send + Sync>> {
-    let res = Encoder { config: *config, alpha_color_mode: AlphaColorMode::UnassociatedDirty }.encode_rgba(buffer)?;
-    Ok((res.avif_file, res.color_byte_size, res.alpha_byte_size))
-}
-
-#[deprecated(note = "use Encoder::new().encode_rgb(…)")]
-#[cold]
-#[doc(hidden)]
-pub fn encode_rgb(buffer: Img<&[RGB8]>, config: &EncConfig) -> Result<(Vec<u8>, usize), Box<dyn std::error::Error + Send + Sync>> {
-    let res = Encoder { config: *config, alpha_color_mode: AlphaColorMode::UnassociatedDirty }.encode_rgb(buffer)?;
-    Ok((res.avif_file, res.color_byte_size))
 }
 
