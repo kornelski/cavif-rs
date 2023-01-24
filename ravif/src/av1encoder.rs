@@ -174,6 +174,10 @@ impl Encoder {
     pub fn encode_rgba(&self, in_buffer: Img<&[rgb::RGBA<u8>]>) -> Result<EncodedImage, Error> {
         let new_alpha = self.convert_alpha(in_buffer);
         let buffer = new_alpha.as_ref().map(|b| b.as_ref()).unwrap_or(in_buffer);
+        let use_alpha = buffer.pixels().any(|px| px.a != 255);
+        if !use_alpha {
+            return self.encode_rgb_internal(buffer.width(), buffer.height(), buffer.pixels().map(|px| px.rgb()))
+        }
 
         let width = buffer.width();
         let height = buffer.height();
@@ -188,13 +192,12 @@ impl Encoder {
             };
             [y, u, v]
         });
-        let use_alpha = buffer.pixels().any(|px| px.a != 255);
-        let alpha = if use_alpha { Some(buffer.pixels().map(|px| px.a)) } else {None};
+        let alpha = buffer.pixels().map(|px| px.a);
         let matrix_coefficients = match self.color_space {
             ColorSpace::YCbCr => MatrixCoefficients::BT601,
             ColorSpace::RGB => MatrixCoefficients::Identity,
         };
-        self.encode_raw_planes_8_bit(width, height, planes, alpha, PixelRange::Full, matrix_coefficients)
+        self.encode_raw_planes_8_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
     }
 
     fn convert_alpha(&self, in_buffer: Img<&[RGBA8]>) -> Option<ImgVec<RGBA8>> {
@@ -234,10 +237,13 @@ impl Encoder {
 /// ```
 ///
 /// returns AVIF file, size of color metadata
+#[inline]
 pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
-    let width = buffer.width();
-    let height = buffer.height();
-    let planes = buffer.pixels().map(|px| {
+    self.encode_rgb_internal(buffer.width(), buffer.height(), buffer.pixels())
+}
+
+fn encode_rgb_internal(&self, width: usize, height: usize, pixels: impl Iterator<Item = RGB8> + Send + Sync) -> Result<EncodedImage, Error> {
+    let planes = pixels.map(|px| {
         let (y,u,v) = match self.color_space {
             ColorSpace::YCbCr => {
                 rgb_to_10_bit_ycbcr(px, BT601)
@@ -262,6 +268,7 @@ pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
 /// If there's no alpha, use `None::<[_; 0]>`.
 ///
 /// returns AVIF file, size of color metadata, size of alpha metadata overhead
+#[inline]
 pub fn encode_raw_planes_8_bit(&self, width: usize, height: usize, planes: impl IntoIterator<Item=[u8; 3]> + Send, alpha: Option<impl IntoIterator<Item=u8> + Send>, color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients) -> Result<EncodedImage, Error> {
     self.encode_raw_planes(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 8)
 }
@@ -275,10 +282,12 @@ pub fn encode_raw_planes_8_bit(&self, width: usize, height: usize, planes: impl 
 /// If there's no alpha, use `None::<[_; 0]>`.
 ///
 /// returns AVIF file, size of color metadata, size of alpha metadata overhead
+#[inline]
 pub fn encode_raw_planes_10_bit(&self, width: usize, height: usize, planes: impl IntoIterator<Item=[u16; 3]> + Send, alpha: Option<impl IntoIterator<Item=u16> + Send>, color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients) -> Result<EncodedImage, Error> {
     self.encode_raw_planes(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 10)
 }
 
+#[inline(never)]
 fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usize, planes: impl IntoIterator<Item=[P; 3]> + Send, alpha: Option<impl IntoIterator<Item=P> + Send>, color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients, bit_depth: u8) -> Result<EncodedImage, Error> {
     let color_description = Some(ColorDescription {
         transfer_characteristics: TransferCharacteristics::SRGB,
@@ -599,6 +608,7 @@ fn init_frame_1<P: rav1e::Pixel + Default>(width: usize, height: usize, planes: 
     Ok(())
 }
 
+#[inline(never)]
 fn encode_to_av1<P: rav1e::Pixel>(p: &Av1EncodeConfig, init: impl FnOnce(&mut Frame<P>) -> Result<(), Error>) -> Result<Vec<u8>, Error> {
     let mut ctx: Context<P> = rav1e_config(p).new_context()?;
     let mut frame = ctx.new_frame();

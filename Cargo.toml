@@ -35,6 +35,7 @@ debug = 1
 opt-level = 3
 debug = false
 lto = true
+strip = true
 
 [profile.dev.package."*"]
 opt-level = 2
