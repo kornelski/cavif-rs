@@ -33,6 +33,7 @@ debug = 1
 
 [profile.release]
 opt-level = 3
+panic = "abort"
 debug = false
 lto = true
 strip = true
