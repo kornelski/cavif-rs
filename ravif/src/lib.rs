@@ -11,11 +11,16 @@
 mod av1encoder;
 
 mod error;
-pub use error::Error;
-pub use av1encoder::ColorSpace;
 pub use av1encoder::AlphaColorMode;
-pub use av1encoder::Encoder;
+pub use av1encoder::ColorSpace;
 pub use av1encoder::EncodedImage;
+pub use av1encoder::Encoder;
+pub use error::BoxError;
+pub use error::Error;
+
+pub mod load_rgba;
+pub use load_rgba::load_rgba;
+
 #[doc(inline)]
 pub use rav1e::prelude::MatrixCoefficients;
 

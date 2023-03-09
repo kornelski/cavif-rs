@@ -1,15 +1,11 @@
-use load_image::export::rgb::ComponentMap;
-use clap::{Arg, Command, AppSettings};
-use imgref::ImgVec;
-use ravif::{AlphaColorMode, ColorSpace, Encoder, EncodedImage, RGBA8};
+use clap::{AppSettings, Arg, Command};
+use ravif::{load_rgba, AlphaColorMode, BoxError, ColorSpace, EncodedImage, Encoder};
 use rayon::prelude::*;
 use std::fs;
 use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
-
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 fn main() {
     if let Err(e) = run() {
@@ -88,14 +84,12 @@ fn run() -> Result<(), BoxError> {
             .multiple_occurrences(true))
         .get_matches();
 
-    let output = args.value_of_os("output").map(|s| {
-        match s {
-            s if s == "-" => MaybePath::Stdio,
-            s => MaybePath::Path(PathBuf::from(s)),
-        }
+    let output = args.value_of_os("output").map(|s| match s {
+        s if s == "-" => MaybePath::Stdio,
+        s => MaybePath::Path(PathBuf::from(s)),
     });
     let quality = args.value_of_t::<f32>("quality")?;
-    let alpha_quality = ((quality + 100.)/2.).min(quality + quality/4. + 2.);
+    let alpha_quality = ((quality + 100.) / 2.).min(quality + quality / 4. + 2.);
     let speed: u8 = args.value_of_t::<u8>("speed")?;
     let overwrite = args.is_present("overwrite");
     let quiet = args.is_present("quiet");
@@ -107,7 +101,9 @@ fn run() -> Result<(), BoxError> {
         "rgb" => ColorSpace::RGB,
         x => Err(format!("bad color type: {x}"))?,
     };
-    let files = args.values_of_os("IMAGES").ok_or("Please specify image paths to convert")?;
+    let files = args
+        .values_of_os("IMAGES")
+        .ok_or("Please specify image paths to convert")?;
     let files: Vec<_> = files
         .filter(|pathstr| {
             let path = Path::new(&pathstr);
@@ -147,7 +143,7 @@ fn run() -> Result<(), BoxError> {
                 let _ = fs::create_dir_all(path);
             }
             files.len() > 1 || path.is_dir()
-        },
+        }
         _ => false,
     };
 
@@ -163,58 +159,72 @@ fn run() -> Result<(), BoxError> {
                     output.clone()
                 }
             }),
-            (None, MaybePath::Stdio) |
-            (Some(MaybePath::Stdio), _) => MaybePath::Stdio,
+            (None, MaybePath::Stdio) | (Some(MaybePath::Stdio), _) => MaybePath::Stdio,
             (Some(MaybePath::Path(output)), MaybePath::Stdio) => MaybePath::Path(output.clone()),
         };
         match out_path {
             MaybePath::Path(ref p) if !overwrite && p.exists() => {
                 return Err(format!("{} already exists; skipping", p.display()).into());
-            },
-            _ => {},
+            }
+            _ => {}
         }
         let enc = Encoder::new()
             .with_quality(quality)
             .with_speed(speed)
             .with_alpha_quality(alpha_quality)
             .with_internal_color_space(color_space)
-            .with_alpha_color_mode(if dirty_alpha { AlphaColorMode::UnassociatedDirty } else { AlphaColorMode::UnassociatedClean })
+            .with_alpha_color_mode(if dirty_alpha {
+                AlphaColorMode::UnassociatedDirty
+            } else {
+                AlphaColorMode::UnassociatedClean
+            })
             .with_num_threads(Some(threads).filter(|&n| n > 0));
-        let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc.encode_rgba(img.as_ref())?;
+        let EncodedImage {
+            avif_file,
+            color_byte_size,
+            alpha_byte_size,
+            ..
+        } = enc.encode_rgba(img.as_ref())?;
         match out_path {
             MaybePath::Path(ref p) => {
                 if !quiet {
-                    println!("{}: {}KB ({color_byte_size}B color, {alpha_byte_size}B alpha, {}B HEIF)", p.display(), (avif_file.len()+999)/1000, avif_file.len() - color_byte_size - alpha_byte_size);
+                    println!(
+                        "{}: {}KB ({color_byte_size}B color, {alpha_byte_size}B alpha, {}B HEIF)",
+                        p.display(),
+                        (avif_file.len() + 999) / 1000,
+                        avif_file.len() - color_byte_size - alpha_byte_size
+                    );
                 }
                 fs::write(p, avif_file)
-            },
-            MaybePath::Stdio => {
-                std::io::stdout().write_all(&avif_file)
-            },
-        }.map_err(|e| format!("Unable to write output image: {e}"))?;
+            }
+            MaybePath::Stdio => std::io::stdout().write_all(&avif_file),
+        }
+        .map_err(|e| format!("Unable to write output image: {e}"))?;
         Ok(())
     };
 
-    let failures = files.into_par_iter().map(|path| {
-        let tmp;
-        let (data, path_str): (_, &dyn std::fmt::Display) = match path {
-            MaybePath::Stdio => {
-                let mut data = Vec::new();
-                std::io::stdin().read_to_end(&mut data)?;
-                (data, &"stdin")
-            },
-            MaybePath::Path(ref path) => {
-                let data = fs::read(path)
-                    .map_err(|e| format!("Unable to read input image {}: {e}", path.display()))?;
-                tmp = path.display();
-                (data, &tmp)
-            },
-        };
-        process(data, &path)
-            .map_err(|e| BoxError::from(format!("{path_str}: error: {e}")))
-    })
-    .filter_map(|res| res.err())
-    .collect::<Vec<BoxError>>();
+    let failures = files
+        .into_par_iter()
+        .map(|path| {
+            let tmp;
+            let (data, path_str): (_, &dyn std::fmt::Display) = match path {
+                MaybePath::Stdio => {
+                    let mut data = Vec::new();
+                    std::io::stdin().read_to_end(&mut data)?;
+                    (data, &"stdin")
+                }
+                MaybePath::Path(ref path) => {
+                    let data = fs::read(path).map_err(|e| {
+                        format!("Unable to read input image {}: {e}", path.display())
+                    })?;
+                    tmp = path.display();
+                    (data, &tmp)
+                }
+            };
+            process(data, &path).map_err(|e| BoxError::from(format!("{path_str}: error: {e}")))
+        })
+        .filter_map(|res| res.err())
+        .collect::<Vec<BoxError>>();
 
     if !failures.is_empty() {
         if !quiet {
@@ -225,38 +235,4 @@ fn run() -> Result<(), BoxError> {
         std::process::exit(1);
     }
     Ok(())
-}
-
-#[cfg(not(feature = "cocoa_image"))]
-fn load_rgba(data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, BoxError> {
-
-    let img = load_image::load_data(data)?.into_imgvec();
-    let mut img = match img {
-        load_image::export::imgref::ImgVecKind::RGB8(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.alpha(255)).collect()),
-        load_image::export::imgref::ImgVecKind::RGBA8(img) => img,
-        load_image::export::imgref::ImgVecKind::RGB16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8).alpha(255)).collect()),
-        load_image::export::imgref::ImgVecKind::RGBA16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8)).collect()),
-        load_image::export::imgref::ImgVecKind::GRAY8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.0; RGBA8::new(c,c,c,255) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAY16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.0>>8) as u8; RGBA8::new(c,c,c,255) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAYA8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.0; RGBA8::new(c,c,c,g.1) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAYA16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.0>>8) as u8; RGBA8::new(c,c,c,(g.1>>8) as u8) }).collect()),
-    };
-
-    if premultiplied_alpha {
-        img.pixels_mut().for_each(|px| {
-            px.r = (u16::from(px.r) * u16::from(px.a) / 255) as u8;
-            px.g = (u16::from(px.g) * u16::from(px.a) / 255) as u8;
-            px.b = (u16::from(px.b) * u16::from(px.a) / 255) as u8;
-        });
-    }
-    Ok(img)
-}
-
-#[cfg(feature = "cocoa_image")]
-fn load_rgba(data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, BoxError> {
-    if premultiplied_alpha {
-        Ok(cocoa_image::decode_image_as_rgba_premultiplied(data)?)
-    } else {
-        Ok(cocoa_image::decode_image_as_rgba(data)?)
-    }
 }

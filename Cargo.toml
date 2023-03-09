@@ -20,12 +20,12 @@ rgb = "0.8.34"
 cocoa_image = { version = "1.0.5", optional = true }
 imgref = "1.9.4"
 clap = { version = "3.2.22", default-features = false, features = ["color", "suggestions", "wrap_help", "std", "cargo"] }
-load_image = "3.0.1"
+
 
 [features]
 default = ["asm", "static"]
 asm = ["ravif/asm"]
-static = ["load_image/lcms2-static"]
+static = ["ravif/static"]
 
 [profile.dev]
 opt-level = 1
