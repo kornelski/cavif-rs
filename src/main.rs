@@ -1,5 +1,8 @@
+use clap::ArgAction;
+use clap::builder::ValueParser;
+use clap::value_parser;
 use load_image::export::rgb::ComponentMap;
-use clap::{Arg, Command, AppSettings};
+use clap::{Arg, Command};
 use imgref::ImgVec;
 use ravif::{AlphaColorMode, ColorSpace, Encoder, EncodedImage, RGBA8};
 use rayon::prelude::*;
@@ -33,81 +36,83 @@ fn run() -> Result<(), BoxError> {
         .version(clap::crate_version!())
         .author("Kornel Lesiński <kornel@imageoptim.com>")
         .about("Convert JPEG/PNG images to AVIF image format (based on AV1/rav1e)")
-        .setting(AppSettings::DeriveDisplayOrder)
         .arg(Arg::new("quality")
             .short('Q')
             .long("quality")
             .value_name("n")
-            .help("Quality from 1 (worst) to 100 (best)")
+            .value_parser(value_parser!(f32))
             .default_value("80")
-            .takes_value(true))
+            .help("Quality from 1 (worst) to 100 (best)"))
         .arg(Arg::new("speed")
             .short('s')
             .long("speed")
             .value_name("n")
             .default_value("4")
-            .help("Encoding speed from 1 (best) to 10 (fast but ugly)")
-            .takes_value(true))
+            .value_parser(value_parser!(u8))
+            .help("Encoding speed from 1 (best) to 10 (fast but ugly)"))
         .arg(Arg::new("threads")
             .short('j')
             .long("threads")
             .value_name("n")
             .default_value("0")
-            .help("Maximum threads to use (0 = one thread per host core)")
-            .takes_value(true))
+            .value_parser(value_parser!(u8))
+            .help("Maximum threads to use (0 = one thread per host core)"))
         .arg(Arg::new("overwrite")
-            .alias("--force")
+            .alias("force")
             .short('f')
             .long("overwrite")
+            .action(ArgAction::SetTrue)
+            .num_args(0)
             .help("Replace files if there's .avif already"))
         .arg(Arg::new("output")
             .short('o')
             .long("output")
-            .allow_invalid_utf8(true)
+            .value_parser(value_parser!(PathBuf))
             .value_name("path")
-            .help("Write output to this path instead of same_file.avif. It may be a file or a directory.")
-            .takes_value(true))
+            .help("Write output to this path instead of same_file.avif. It may be a file or a directory."))
         .arg(Arg::new("quiet")
             .short('q')
             .long("quiet")
+            .action(ArgAction::SetTrue)
+            .num_args(0)
             .help("Don't print anything"))
         .arg(Arg::new("dirty-alpha")
             .long("dirty-alpha")
+            .action(ArgAction::SetTrue)
+            .num_args(0)
             .help("Keep RGB data of fully-transparent pixels (makes larger, lower quality files)"))
         .arg(Arg::new("color")
             .long("color")
             .default_value("ycbcr")
-            .takes_value(true)
-            .possible_values(["ycbcr", "rgb"])
+            .value_parser(["ycbcr", "rgb"])
             .help("Internal AVIF color space. YCbCr works better for human eyes."))
         .arg(Arg::new("IMAGES")
             .index(1)
-            .allow_invalid_utf8(true)
-            .min_values(1)
-            .help("One or more JPEG or PNG files to convert. \"-\" is interpreted as stdin/stdout.")
-            .multiple_occurrences(true))
+            .num_args(1..)
+            .value_parser(value_parser!(PathBuf))
+            .help("One or more JPEG or PNG files to convert. \"-\" is interpreted as stdin/stdout."))
         .get_matches();
 
-    let output = args.value_of_os("output").map(|s| {
+    let output = args.get_one::<PathBuf>("output").map(|s| {
         match s {
-            s if s == "-" => MaybePath::Stdio,
+            s if s.as_os_str() == "-" => MaybePath::Stdio,
             s => MaybePath::Path(PathBuf::from(s)),
         }
     });
-    let quality = args.value_of_t::<f32>("quality")?;
+    let quality = *args.get_one::<f32>("quality").expect("default");
     let alpha_quality = ((quality + 100.)/2.).min(quality + quality/4. + 2.);
-    let speed: u8 = args.value_of_t::<u8>("speed")?;
-    let overwrite = args.is_present("overwrite");
-    let quiet = args.is_present("quiet");
-    let threads = args.value_of_t::<usize>("threads")?;
-    let dirty_alpha = args.is_present("dirty-alpha");
+    let speed: u8 = *args.get_one::<u8>("speed").expect("default");
+    let overwrite = args.get_flag("overwrite");
+    let quiet = args.get_flag("quiet");
+    let threads = args.get_one::<u8>("threads").copied();
+    let dirty_alpha = args.get_flag("dirty-alpha");
 
-    let color_space = match args.value_of("color").expect("default") {
+    let color_space = match args.get_one::<String>("color").expect("default").as_str() {
         "ycbcr" => ColorSpace::YCbCr,
         "rgb" => ColorSpace::RGB,
         x => Err(format!("bad color type: {x}"))?,
     };
-    let files = args.values_of_os("IMAGES").ok_or("Please specify image paths to convert")?;
+    let files = args.get_many::<PathBuf>("IMAGES").ok_or("Please specify image paths to convert")?;
     let files: Vec<_> = files
         .filter(|pathstr| {
             let path = Path::new(&pathstr);
@@ -130,7 +135,7 @@ fn run() -> Result<(), BoxError> {
                 true
             })
         })
-        .map(|p| if p == "-" {
+        .map(|p| if p.as_os_str() == "-" {
             MaybePath::Stdio
         } else {
             MaybePath::Path(PathBuf::from(p))
@@ -179,7 +184,7 @@ fn run() -> Result<(), BoxError> {
             .with_alpha_quality(alpha_quality)
             .with_internal_color_space(color_space)
             .with_alpha_color_mode(if dirty_alpha { AlphaColorMode::UnassociatedDirty } else { AlphaColorMode::UnassociatedClean })
-            .with_num_threads(Some(threads).filter(|&n| n > 0));
+            .with_num_threads(threads.filter(|&n| n > 0).map(usize::from));
         let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc.encode_rgba(img.as_ref())?;
         match out_path {
             MaybePath::Path(ref p) => {
