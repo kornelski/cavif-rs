@@ -31,6 +31,22 @@ enum MaybePath {
     Path(PathBuf),
 }
 
+fn parse_quality(arg: &str) -> Result<f32, String> {
+    let q = arg.parse::<f32>().map_err(|e| e.to_string())?;
+    if q < 1. || q > 100. {
+        return Err("quality must be in 1-100 range".into());
+    }
+    Ok(q)
+}
+
+fn parse_speed(arg: &str) -> Result<u8, String> {
+    let s = arg.parse::<u8>().map_err(|e| e.to_string())?;
+    if s < 1 || s > 100 {
+        return Err("speed must be in 1-10 range".into());
+    }
+    Ok(s)
+}
+
 fn run() -> Result<(), BoxError> {
     let args = Command::new("cavif-rs")
         .version(clap::crate_version!())
@@ -40,7 +56,7 @@ fn run() -> Result<(), BoxError> {
             .short('Q')
             .long("quality")
             .value_name("n")
-            .value_parser(value_parser!(f32))
+            .value_parser(parse_quality)
             .default_value("80")
             .help("Quality from 1 (worst) to 100 (best)"))
         .arg(Arg::new("speed")
@@ -48,7 +64,7 @@ fn run() -> Result<(), BoxError> {
             .long("speed")
             .value_name("n")
             .default_value("4")
-            .value_parser(value_parser!(u8))
+            .value_parser(parse_speed)
             .help("Encoding speed from 1 (best) to 10 (fast but ugly)"))
         .arg(Arg::new("threads")
             .short('j')
