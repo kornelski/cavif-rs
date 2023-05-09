@@ -1,6 +1,6 @@
 # `cavif` — PNG/JPEG to AVIF converter
 
-Encoder/converter for AVIF images. Based on [rav1e](//lib.rs/rav1e) and [avif-serialize](https://lib.rs/avif-serialize), which makes it an almost pure-Rust tool (it uses C LCMS2 for color profiles).
+Encoder/converter for AVIF images. Based on [rav1e](//lib.rs/crates/rav1e) and [avif-serialize](https://lib.rs/crates/avif-serialize), which makes it an almost pure-Rust tool (it uses C LCMS2 for color profiles).
 
 ## Installation
 
@@ -8,14 +8,7 @@ Encoder/converter for AVIF images. Based on [rav1e](//lib.rs/rav1e) and [avif-se
 
 The pre-built zip includes a portable static executable, with no dependencies, that runs on any Linux distro. It also includes executables for macOS and Windows.
 
-## Compatibility
-
-* Chrome 85+ desktop,
-* Chrome on Android 12,
-* Firefox 91,
-* Safari iOS 16/macOS Ventura.
-
-## Running
+## Usage
 
 Run in a terminal (hint: you don't need to type the path, terminals accept file drag'n'drop)
 
@@ -29,9 +22,9 @@ It makes `image.avif`. You can adjust quality (it's in 1-100 scale):
 cavif --quality 60 image.png
 ```
 
-### Usage
+### Advanced usage
 
-You can also specify multiple images (encoding is multi-threaded, so the more, the better!).
+You can also specify multiple images. Encoding is multi-threaded, so the more, the better!
 
 ```text
 cavif [OPTIONS] IMAGES...
@@ -47,14 +40,25 @@ There are additional options that tweak AVIF color space. The defaults in `cavif
 
  * `--dirty-alpha` — Preserve RGB values of fully transparent pixels (not recommended). By default irrelevant color of transparent pixels is cleared to avoid wasting space.
  * `--color=rgb` — Encode using RGB instead of YCbCr color space. Makes colors closer to lossless, but makes files larger. Use only if you need to avoid even smallest color shifts.
+ * `--depth=8` — Encode using 8-bit color depth instead of 10-bit. This results in a slightly worse quality/compression ratio, but is more compatible.
 
+## Compatibility
+
+Images [work in all modern browsers](https://caniuse.com/avif).
+
+* Chrome 85+ desktop,
+* Chrome on Android 12,
+* Firefox 91,
+* Safari iOS 16/macOS Ventura.
+
+### Known incompatibilities
+
+* Windows' preview and very old versions of android are reported to show pink line at the right edge. This is probably a bug in an old AVIF decoder they use.
+* Windows' preview doesn't seem to support 10-bit deep images. Use `--depth=8` when encoding if this is a problem.
 
 ## Building
 
-To build it from source you need:
-
-* Rust 1.60 or later, preferably via [rustup](https://rustup.rs),
-* [`nasm`](https://www.nasm.us/) 2.14 or later.
+To build it from source you need Rust 1.67 or later, preferably via [rustup](https://rustup.rs).
 
 Then run in a terminal:
 
