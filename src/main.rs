@@ -1,5 +1,4 @@
 use clap::ArgAction;
-use clap::builder::ValueParser;
 use clap::value_parser;
 use load_image::export::rgb::ComponentMap;
 use clap::{Arg, Command};
@@ -102,6 +101,11 @@ fn run() -> Result<(), BoxError> {
             .default_value("ycbcr")
             .value_parser(["ycbcr", "rgb"])
             .help("Internal AVIF color space. YCbCr works better for human eyes."))
+        .arg(Arg::new("depth")
+            .long("depth")
+            .default_value("auto")
+            .value_parser(["8", "10", "auto"])
+            .help("Write 8-bit (more compatible) or 10-bit (better quality) images"))
         .arg(Arg::new("IMAGES")
             .index(1)
             .num_args(1..)
@@ -128,6 +132,13 @@ fn run() -> Result<(), BoxError> {
         "rgb" => ColorSpace::RGB,
         x => Err(format!("bad color type: {x}"))?,
     };
+
+    let depth = match args.get_one::<String>("depth").expect("default").as_str() {
+        "8" => Some(8),
+        "10" => Some(10),
+        _ => None,
+    };
+
     let files = args.get_many::<PathBuf>("IMAGES").ok_or("Please specify image paths to convert")?;
     let files: Vec<_> = files
         .filter(|pathstr| {
@@ -196,6 +207,7 @@ fn run() -> Result<(), BoxError> {
         }
         let enc = Encoder::new()
             .with_quality(quality)
+            .with_depth(depth)
             .with_speed(speed)
             .with_alpha_quality(alpha_quality)
             .with_internal_color_space(color_space)
