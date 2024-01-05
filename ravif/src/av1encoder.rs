@@ -538,7 +538,7 @@ impl SpeedTweaks {
         if let Some(v) = self.fine_directional_intra { speed_settings.prediction.fine_directional_intra = v; }
         if let Some(v) = self.complex_prediction_modes { speed_settings.prediction.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple} };
         if let Some((min, max)) = self.partition_range {
-            assert!(min <= max);
+            debug_assert!(min <= max);
             fn sz(s: u8) -> BlockSize {
                 match s {
                     4 => BlockSize::BLOCK_4X4,
