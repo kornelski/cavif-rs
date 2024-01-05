@@ -1,7 +1,7 @@
 [package]
 name = "cavif"
 description = "Encodes images in AVIF format (image2avif converter) using a pure-Rust encoder."
-version = "1.5.4"
+version = "1.5.5"
 authors = ["Kornel Lesiński <kornel@geekhood.net>"]
 edition = "2021"
 license = "BSD-3-Clause"
@@ -14,7 +14,7 @@ include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
 rust-version = "1.64"
 
 [dependencies]
-ravif = { version = "0.11.2", path = "./ravif", default-features = false }
+ravif = { version = "0.11.3", path = "./ravif", default-features = false }
 rayon = "1.7.0"
 rgb = "0.8.36"
 cocoa_image = { version = "1.0.6", optional = true }

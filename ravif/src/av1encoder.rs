@@ -395,7 +395,7 @@ fn encode_raw_planes<P: rav1e::Pixel + Default>(&self, width: usize, height: usi
 
 #[inline(always)]
 fn to_ten(x: u8) -> u16 {
-    ((x as u16) << 2) | ((x as u16) >> 6)
+    (u16::from(x) << 2) | (u16::from(x) >> 6)
 }
 
 #[inline(always)]
