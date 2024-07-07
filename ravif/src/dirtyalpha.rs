@@ -63,14 +63,14 @@ fn bleed_opaque_color(img: ImgRef<RGBA8>, bg: RGBA8) -> Img<Vec<RGBA8>> {
             } else {
                 let mut avg = sum.map(|c| (c / weights) as u8);
                 if mid.curr.a == 0 {
-                    avg.alpha(0)
+                    avg.with_alpha(0)
                 } else {
                     // also change non-transparent colors, but only within range where
                     // rounding caused by premultiplied alpha would land on the same color
                     avg.r = clamp(avg.r, premultiplied_minmax(mid.curr.r, mid.curr.a));
                     avg.g = clamp(avg.g, premultiplied_minmax(mid.curr.g, mid.curr.a));
                     avg.b = clamp(avg.b, premultiplied_minmax(mid.curr.b, mid.curr.a));
-                    avg.alpha(mid.curr.a)
+                    avg.with_alpha(mid.curr.a)
                 }
             }
         });
@@ -89,14 +89,14 @@ fn blur_transparent_pixels(img: ImgRef<RGBA8>) -> Img<Vec<RGBA8>> {
                 chain(&top, &mid, &bot).map(|px| px.rgb().map(u16::from)).sum();
             let mut avg = sum.map(|c| (c / 9) as u8);
             if mid.curr.a == 0 {
-                avg.alpha(0)
+                avg.with_alpha(0)
             } else {
                 // also change non-transparent colors, but only within range where
                 // rounding caused by premultiplied alpha would land on the same color
                 avg.r = clamp(avg.r, premultiplied_minmax(mid.curr.r, mid.curr.a));
                 avg.g = clamp(avg.g, premultiplied_minmax(mid.curr.g, mid.curr.a));
                 avg.b = clamp(avg.b, premultiplied_minmax(mid.curr.b, mid.curr.a));
-                avg.alpha(mid.curr.a)
+                avg.with_alpha(mid.curr.a)
             }
         });
     });

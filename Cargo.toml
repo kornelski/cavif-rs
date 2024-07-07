@@ -14,11 +14,11 @@ include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
 rust-version = "1.64"
 
 [dependencies]
-ravif = { version = "0.11.3", path = "./ravif", default-features = false }
-rayon = "1.7.0"
-rgb = "0.8.36"
+ravif = { version = "0.11.8", path = "./ravif", default-features = false }
+rayon = "1.10.0"
+rgb = "0.8.42"
 cocoa_image = { version = "1.0.6", optional = true }
-imgref = "1.9.4"
+imgref = "1.10.1"
 clap = { version = "4.3.24", default-features = false, features = ["color", "suggestions", "wrap_help", "std", "cargo"] }
 load_image = "3.0.3"
 
