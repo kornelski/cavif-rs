@@ -6,6 +6,8 @@ use imgref::ImgVec;
 use rav1e::prelude::*;
 use rgb::RGB8;
 use rgb::RGBA8;
+#[cfg(not(feature = "threading"))]
+use crate::rayoff as rayon;
 
 /// For [`Encoder::with_internal_color_space`]
 #[derive(Debug, Copy, Clone)]

@@ -25,3 +25,14 @@ mod dirtyalpha;
 pub use imgref::Img;
 #[doc(no_inline)]
 pub use rgb::{RGB8, RGBA8};
+
+#[cfg(not(feature = "threading"))]
+mod rayoff {
+    pub fn current_num_threads() -> usize {
+        std::thread::available_parallelism().map(|v| v.get()).unwrap_or(1)
+    }
+
+    pub fn join<A, B>(a: impl FnOnce() -> A, b: impl FnOnce() -> B) -> (A, B) {
+        (a(), b())
+    }
+}
