@@ -1,6 +1,5 @@
 use clap::ArgAction;
 use clap::value_parser;
-use load_image::export::rgb::ComponentMap;
 use clap::{Arg, Command};
 use imgref::ImgVec;
 use ravif::{AlphaColorMode, ColorSpace, Encoder, EncodedImage, RGBA8};
@@ -262,12 +261,13 @@ fn run() -> Result<(), BoxError> {
 
 #[cfg(not(feature = "cocoa_image"))]
 fn load_rgba(data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, BoxError> {
+    use rgb::prelude::*;
 
     let img = load_image::load_data(data)?.into_imgvec();
     let mut img = match img {
-        load_image::export::imgref::ImgVecKind::RGB8(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.alpha(255)).collect()),
+        load_image::export::imgref::ImgVecKind::RGB8(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.with_alpha(255)).collect()),
         load_image::export::imgref::ImgVecKind::RGBA8(img) => img,
-        load_image::export::imgref::ImgVecKind::RGB16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8).alpha(255)).collect()),
+        load_image::export::imgref::ImgVecKind::RGB16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8).with_alpha(255)).collect()),
         load_image::export::imgref::ImgVecKind::RGBA16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8)).collect()),
         load_image::export::imgref::ImgVecKind::GRAY8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.0; RGBA8::new(c,c,c,255) }).collect()),
         load_image::export::imgref::ImgVecKind::GRAY16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.0>>8) as u8; RGBA8::new(c,c,c,255) }).collect()),
