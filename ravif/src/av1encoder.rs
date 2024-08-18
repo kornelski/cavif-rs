@@ -10,7 +10,7 @@ use rgb::RGBA8;
 use crate::rayoff as rayon;
 
 /// For [`Encoder::with_internal_color_space`]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ColorSpace {
     /// Standard color space for photographic content. Usually the best choice.
     /// This library always uses full-resolution color (4:4:4).
