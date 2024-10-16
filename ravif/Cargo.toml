@@ -11,7 +11,7 @@ categories = ["multimedia::images", "multimedia::encoding"]
 homepage = "https://lib.rs/ravif"
 repository = "https://github.com/kornelski/cavif-rs"
 include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
-rust-version = "1.79" # bitstream-io breaks it
+rust-version = "1.70" # as low as `cargo -Zminimal-versions generate-lockfile` will let us go
 
 [dependencies]
 avif-serialize = "0.8.1"
