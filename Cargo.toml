@@ -1,7 +1,7 @@
 [package]
 name = "cavif"
 description = "Encodes images in AVIF format (image2avif converter) using a pure-Rust encoder."
-version = "1.5.5"
+version = "1.5.6"
 authors = ["Kornel Lesiński <kornel@geekhood.net>"]
 edition = "2021"
 license = "BSD-3-Clause"
@@ -10,16 +10,16 @@ keywords = ["avif", "png2avif", "jpeg2avif", "convert", "av1"]
 categories = ["command-line-utilities", "multimedia::images", "multimedia::encoding"]
 homepage = "https://lib.rs/cavif"
 repository = "https://github.com/kornelski/cavif-rs"
-include = ["README.md", "LICENSE", "Cargo.toml", "/src/*.rs"]
-rust-version = "1.65"
+include = ["README.md", "LICENSE", "/src/*.rs"]
+rust-version = "1.70"
 
 [dependencies]
-ravif = { version = "0.11.9", path = "./ravif", default-features = false, features = ["threading"] }
+ravif = { version = "0.11.11", path = "./ravif", default-features = false, features = ["threading"] }
 rayon = "1.10.0"
-rgb = { version = "0.8.48", default-features = false }
+rgb = { version = "0.8.50", default-features = false }
 cocoa_image = { version = "1.0.7", optional = true }
-imgref = "1.10.1"
-clap = { version = "4.3.24", default-features = false, features = ["color", "suggestions", "wrap_help", "std", "cargo"] }
+imgref = "1.11.0"
+clap = { version = "4.4.18", default-features = false, features = ["color", "suggestions", "wrap_help", "std", "cargo"] }
 load_image = "3.0.3"
 
 [features]
@@ -42,7 +42,7 @@ strip = true
 opt-level = 2
 
 [dev-dependencies]
-avif-parse = "1.0.0"
+avif-parse = "1.3.2"
 
 [badges]
 maintenance = { status = "actively-developed" }
