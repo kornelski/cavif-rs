@@ -12,7 +12,11 @@ mod av1encoder;
 
 mod error;
 pub use error::Error;
-pub use av1encoder::ColorSpace;
+pub use av1encoder::ColorModel;
+
+#[doc(hidden)]
+pub use ColorModel as ColorSpace;
+
 pub use av1encoder::AlphaColorMode;
 pub use av1encoder::Encoder;
 pub use av1encoder::EncodedImage;

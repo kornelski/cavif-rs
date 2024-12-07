@@ -2,7 +2,7 @@ use clap::ArgAction;
 use clap::value_parser;
 use clap::{Arg, Command};
 use imgref::ImgVec;
-use ravif::{AlphaColorMode, ColorSpace, Encoder, EncodedImage, RGBA8};
+use ravif::{AlphaColorMode, ColorModel, Encoder, EncodedImage, RGBA8};
 use rayon::prelude::*;
 use std::fs;
 use std::io::Read;
@@ -99,7 +99,7 @@ fn run() -> Result<(), BoxError> {
             .long("color")
             .default_value("ycbcr")
             .value_parser(["ycbcr", "rgb"])
-            .help("Internal AVIF color space. YCbCr works better for human eyes."))
+            .help("Internal AVIF color model. YCbCr works better for human eyes."))
         .arg(Arg::new("depth")
             .long("depth")
             .default_value("auto")
@@ -126,9 +126,9 @@ fn run() -> Result<(), BoxError> {
     let threads = args.get_one::<u8>("threads").copied();
     let dirty_alpha = args.get_flag("dirty-alpha");
 
-    let color_space = match args.get_one::<String>("color").expect("default").as_str() {
-        "ycbcr" => ColorSpace::YCbCr,
-        "rgb" => ColorSpace::RGB,
+    let color_model = match args.get_one::<String>("color").expect("default").as_str() {
+        "ycbcr" => ColorModel::YCbCr,
+        "rgb" => ColorModel::RGB,
         x => Err(format!("bad color type: {x}"))?,
     };
 
@@ -209,7 +209,7 @@ fn run() -> Result<(), BoxError> {
             .with_depth(depth)
             .with_speed(speed)
             .with_alpha_quality(alpha_quality)
-            .with_internal_color_space(color_space)
+            .with_internal_color_model(color_model)
             .with_alpha_color_mode(if dirty_alpha { AlphaColorMode::UnassociatedDirty } else { AlphaColorMode::UnassociatedClean })
             .with_num_threads(threads.filter(|&n| n > 0).map(usize::from));
         let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc.encode_rgba(img.as_ref())?;

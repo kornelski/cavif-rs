@@ -9,9 +9,9 @@ use rgb::RGBA8;
 #[cfg(not(feature = "threading"))]
 use crate::rayoff as rayon;
 
-/// For [`Encoder::with_internal_color_space`]
+/// For [`Encoder::with_internal_color_model`]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum ColorSpace {
+pub enum ColorModel {
     /// Standard color space for photographic content. Usually the best choice.
     /// This library always uses full-resolution color (4:4:4).
     /// This library will automatically choose between BT.601 or BT.709.
@@ -64,7 +64,7 @@ pub struct Encoder {
     /// True if RGBA input has already been premultiplied. It inserts appropriate metadata.
     premultiplied_alpha: bool,
     /// Which pixel format to use in AVIF file. RGB tends to give larger files.
-    color_space: ColorSpace,
+    color_model: ColorModel,
     /// How many threads should be used (0 = match core count), None - use global rayon thread pool
     threads: Option<usize>,
     /// [`AlphaColorMode`]
@@ -84,7 +84,7 @@ impl Encoder {
             speed: 5,
             depth: None,
             premultiplied_alpha: false,
-            color_space: ColorSpace::YCbCr,
+            color_model: ColorModel::YCbCr,
             threads: None,
             alpha_color_mode: AlphaColorMode::UnassociatedClean,
         }
@@ -134,12 +134,17 @@ impl Encoder {
     /// Changes how color channels are stored in the image. The default is YCbCr.
     ///
     /// Note that this is only internal detail for the AVIF file, and doesn't
-    /// change color space of inputs to encode functions.
+    /// change color model of inputs to encode functions.
     #[inline(always)]
     #[must_use]
-    pub fn with_internal_color_space(mut self, color_space: ColorSpace) -> Self {
-        self.color_space = color_space;
+    pub fn with_internal_color_model(mut self, color_model: ColorModel) -> Self {
+        self.color_model = color_model;
         self
+    }
+
+    #[doc(hidden)]
+    pub fn with_internal_color_space(self, color_model: ColorModel) -> Self {
+        self.with_internal_color_model(color_model)
     }
 
     /// Configures `rayon` thread pool size.
@@ -196,17 +201,17 @@ impl Encoder {
 
         let width = buffer.width();
         let height = buffer.height();
-        let matrix_coefficients = match self.color_space {
-            ColorSpace::YCbCr => MatrixCoefficients::BT601,
-            ColorSpace::RGB => MatrixCoefficients::Identity,
+        let matrix_coefficients = match self.color_model {
+            ColorModel::YCbCr => MatrixCoefficients::BT601,
+            ColorModel::RGB => MatrixCoefficients::Identity,
         };
         if self.depth == Some(10) {
             let planes = buffer.pixels().map(|px| {
-                let (y,u,v) = match self.color_space {
-                    ColorSpace::YCbCr => {
+                let (y,u,v) = match self.color_model {
+                    ColorModel::YCbCr => {
                         rgb_to_10_bit_ycbcr(px.rgb(), BT601)
                     },
-                    ColorSpace::RGB => {
+                    ColorModel::RGB => {
                         rgb_to_10_bit_gbr(px.rgb())
                     },
                 };
@@ -216,11 +221,11 @@ impl Encoder {
             self.encode_raw_planes_10_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
         } else {
             let planes = buffer.pixels().map(|px| {
-                let (y,u,v) = match self.color_space {
-                    ColorSpace::YCbCr => {
+                let (y,u,v) = match self.color_model {
+                    ColorModel::YCbCr => {
                         rgb_to_8_bit_ycbcr(px.rgb(), BT601)
                     },
-                    ColorSpace::RGB => {
+                    ColorModel::RGB => {
                         rgb_to_8_bit_gbr(px.rgb())
                     },
                 };
@@ -274,17 +279,17 @@ pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
 }
 
 fn encode_rgb_internal(&self, width: usize, height: usize, pixels: impl Iterator<Item = RGB8> + Send + Sync) -> Result<EncodedImage, Error> {
-    let matrix_coefficients = match self.color_space {
-        ColorSpace::YCbCr => MatrixCoefficients::BT601,
-        ColorSpace::RGB => MatrixCoefficients::Identity,
+    let matrix_coefficients = match self.color_model {
+        ColorModel::YCbCr => MatrixCoefficients::BT601,
+        ColorModel::RGB => MatrixCoefficients::Identity,
     };
     if self.depth == Some(8) {
         let planes = pixels.map(|px| {
-            let (y,u,v) = match self.color_space {
-                ColorSpace::YCbCr => {
+            let (y,u,v) = match self.color_model {
+                ColorModel::YCbCr => {
                     rgb_to_8_bit_ycbcr(px, BT601)
                 },
-                ColorSpace::RGB => {
+                ColorModel::RGB => {
                     rgb_to_8_bit_gbr(px)
                 },
             };
@@ -293,11 +298,11 @@ fn encode_rgb_internal(&self, width: usize, height: usize, pixels: impl Iterator
         self.encode_raw_planes_8_bit(width, height, planes, None::<[_; 0]>, PixelRange::Full, matrix_coefficients)
     } else {
         let planes = pixels.map(|px| {
-            let (y,u,v) = match self.color_space {
-                ColorSpace::YCbCr => {
+            let (y,u,v) = match self.color_model {
+                ColorModel::YCbCr => {
                     rgb_to_10_bit_ycbcr(px, BT601)
                 },
-                ColorSpace::RGB => {
+                ColorModel::RGB => {
                     rgb_to_10_bit_gbr(px)
                 },
             };
