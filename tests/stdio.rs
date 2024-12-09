@@ -21,7 +21,7 @@ fn stdio() -> Result<(), std::io::Error> {
     let mut data = Vec::new();
     cmd.stdout.take().unwrap().read_to_end(&mut data)?;
     assert!(cmd.wait()?.success());
-    assert_eq!(&data[4..4+8], b"ftypavif");
+    assert_eq!(&data[4..4 + 8], b"ftypavif");
     Ok(())
 }
 
