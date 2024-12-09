@@ -7,10 +7,10 @@ fn weighed_pixel(px: RGBA8) -> (u16, RGB<u32>) {
         return (0, RGB::new(0, 0, 0));
     }
     let weight = 256 - u16::from(px.a);
-    (weight, RGB::new(
-        u32::from(px.r) * u32::from(weight),
-        u32::from(px.g) * u32::from(weight),
-        u32::from(px.b) * u32::from(weight)))
+    (
+        weight,
+        RGB::new(u32::from(px.r) * u32::from(weight), u32::from(px.g) * u32::from(weight), u32::from(px.b) * u32::from(weight)),
+    )
 }
 
 /// Clear/change RGB components of fully-transparent RGBA pixels to make them cheaper to encode with AV1
@@ -48,13 +48,11 @@ fn bleed_opaque_color(img: ImgRef<RGBA8>, bg: RGBA8) -> Img<Vec<RGBA8>> {
         out.push(if mid.curr.a == 255 {
             mid.curr
         } else {
-            let (weights, sum) = chain(&top, &mid, &bot)
-                .map(|c| weighed_pixel(*c))
-                .fold((0u32, RGB::new(0,0,0)), |mut sum, item| {
-                    sum.0 += u32::from(item.0);
-                    sum.1 += item.1;
-                    sum
-                });
+            let (weights, sum) = chain(&top, &mid, &bot).map(|c| weighed_pixel(*c)).fold((0u32, RGB::new(0, 0, 0)), |mut sum, item| {
+                sum.0 += u32::from(item.0);
+                sum.1 += item.1;
+                sum
+            });
             if weights == 0 {
                 bg
             } else {

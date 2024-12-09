@@ -247,7 +247,8 @@ impl Encoder {
             AlphaColorMode::UnassociatedDirty => None,
             AlphaColorMode::UnassociatedClean => blurred_dirty_alpha(in_buffer),
             AlphaColorMode::Premultiplied => {
-                let prem = in_buffer.pixels()
+                let prem = in_buffer
+                    .pixels()
                     .filter(|px| px.a != 255)
                     .map(|px| {
                         if px.a == 0 {
@@ -361,9 +362,7 @@ impl Encoder {
             matrix_coefficients,
         });
 
-        let threads = self.threads.map(|threads| {
-            if threads > 0 { threads } else { rayon::current_num_threads() }
-        });
+        let threads = self.threads.map(|threads| if threads > 0 { threads } else { rayon::current_num_threads() });
 
         let encode_color = move || {
             encode_to_av1::<P>(
@@ -422,7 +421,9 @@ impl Encoder {
         let alpha_byte_size = alpha.as_ref().map_or(0, |a| a.len());
 
         Ok(EncodedImage {
-            avif_file, color_byte_size, alpha_byte_size,
+            avif_file,
+            color_byte_size,
+            alpha_byte_size,
         })
     }
 }
@@ -470,7 +471,13 @@ fn rgb_to_8_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u8, u8, u8) {
 
 fn quality_to_quantizer(quality: f32) -> u8 {
     let q = quality / 100.;
-    let x = if q >= 0.85 { (1. - q) * 3. } else if q > 0.25 { 1. - 0.125 - q * 0.5 } else { 1. - q };
+    let x = if q >= 0.85 {
+        (1. - q) * 3.
+    } else if q > 0.25 {
+        1. - 0.125 - q * 0.5
+    } else {
+        1. - q
+    };
     (x * 255.).round() as u8
 }
 
@@ -515,7 +522,7 @@ impl SpeedTweaks {
             }),
 
             complex_prediction_modes: Some(speed <= 1), // 2x-3x slower, 2% better
-            sgr_complexity_full: Some(speed <= 2), // 15% slower, barely improves anything -/+1%
+            sgr_complexity_full: Some(speed <= 2),      // 15% slower, barely improves anything -/+1%
 
             encode_bottomup: Some(speed <= 2), // may be costly (+60%), may even backfire
 
@@ -523,21 +530,20 @@ impl SpeedTweaks {
 
             // these two are together?
             rdo_tx_decision: Some(speed <= 4 && !high_quality), // it tends to blur subtle textures
-            reduced_tx_set: Some(speed == 4 || speed >= 9), // It interacts with tx_domain_distortion too?
+            reduced_tx_set: Some(speed == 4 || speed >= 9),     // It interacts with tx_domain_distortion too?
 
             // 4px blocks disabled at 5
-
             fine_directional_intra: Some(speed <= 6),
             fast_deblock: Some(speed >= 7 && !high_quality), // mixed bag?
 
             // 8px blocks disabled at 8
-            lrf: Some(low_quality && speed <= 8), // hardly any help for hi-q images. recovers some q at low quality
+            lrf: Some(low_quality && speed <= 8),  // hardly any help for hi-q images. recovers some q at low quality
             cdef: Some(low_quality && speed <= 9), // hardly any help for hi-q images. recovers some q at low quality
 
             inter_tx_split: Some(speed >= 9), // mixed bag even when it works, and it backfires if not used together with reduced_tx_set
             tx_domain_rate: Some(speed >= 10), // 20% faster, but also 10% larger files!
 
-            tx_domain_distortion: None, // very mixed bag, sometimes helps speed sometimes it doesn't
+            tx_domain_distortion: None,   // very mixed bag, sometimes helps speed sometimes it doesn't
             use_satd_subpel: Some(false), // doesn't make sense
             min_tile_size: match speed {
                 0 => 4096,
@@ -558,19 +564,45 @@ impl SpeedTweaks {
         speed_settings.scene_detection_mode = SceneDetectionSpeed::None;
         speed_settings.motion.include_near_mvs = false;
 
-        if let Some(v) = self.fast_deblock { speed_settings.fast_deblock = v; }
-        if let Some(v) = self.reduced_tx_set { speed_settings.transform.reduced_tx_set = v; }
-        if let Some(v) = self.tx_domain_distortion { speed_settings.transform.tx_domain_distortion = v; }
-        if let Some(v) = self.tx_domain_rate { speed_settings.transform.tx_domain_rate = v; }
-        if let Some(v) = self.encode_bottomup { speed_settings.partition.encode_bottomup = v; }
-        if let Some(v) = self.rdo_tx_decision { speed_settings.transform.rdo_tx_decision = v; }
-        if let Some(v) = self.cdef { speed_settings.cdef = v; }
-        if let Some(v) = self.lrf { speed_settings.lrf = v; }
-        if let Some(v) = self.inter_tx_split { speed_settings.transform.enable_inter_tx_split = v; }
-        if let Some(v) = self.sgr_complexity_full { speed_settings.sgr_complexity = if v { SGRComplexityLevel::Full } else { SGRComplexityLevel::Reduced } };
-        if let Some(v) = self.use_satd_subpel { speed_settings.motion.use_satd_subpel = v; }
-        if let Some(v) = self.fine_directional_intra { speed_settings.prediction.fine_directional_intra = v; }
-        if let Some(v) = self.complex_prediction_modes { speed_settings.prediction.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple} };
+        if let Some(v) = self.fast_deblock {
+            speed_settings.fast_deblock = v;
+        }
+        if let Some(v) = self.reduced_tx_set {
+            speed_settings.transform.reduced_tx_set = v;
+        }
+        if let Some(v) = self.tx_domain_distortion {
+            speed_settings.transform.tx_domain_distortion = v;
+        }
+        if let Some(v) = self.tx_domain_rate {
+            speed_settings.transform.tx_domain_rate = v;
+        }
+        if let Some(v) = self.encode_bottomup {
+            speed_settings.partition.encode_bottomup = v;
+        }
+        if let Some(v) = self.rdo_tx_decision {
+            speed_settings.transform.rdo_tx_decision = v;
+        }
+        if let Some(v) = self.cdef {
+            speed_settings.cdef = v;
+        }
+        if let Some(v) = self.lrf {
+            speed_settings.lrf = v;
+        }
+        if let Some(v) = self.inter_tx_split {
+            speed_settings.transform.enable_inter_tx_split = v;
+        }
+        if let Some(v) = self.sgr_complexity_full {
+            speed_settings.sgr_complexity = if v { SGRComplexityLevel::Full } else { SGRComplexityLevel::Reduced }
+        };
+        if let Some(v) = self.use_satd_subpel {
+            speed_settings.motion.use_satd_subpel = v;
+        }
+        if let Some(v) = self.fine_directional_intra {
+            speed_settings.prediction.fine_directional_intra = v;
+        }
+        if let Some(v) = self.complex_prediction_modes {
+            speed_settings.prediction.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple }
+        };
         if let Some((min, max)) = self.partition_range {
             debug_assert!(min <= max);
             fn sz(s: u8) -> BlockSize {
@@ -612,8 +644,7 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
         threads.min((p.width * p.height) / (p.speed.min_tile_size as usize).pow(2))
     };
     let speed_settings = p.speed.speed_settings();
-    let cfg = Config::new()
-        .with_encoder_config(EncoderConfig {
+    let cfg = Config::new().with_encoder_config(EncoderConfig {
         width: p.width,
         height: p.height,
         time_base: Rational::new(1, 1),
@@ -708,8 +739,7 @@ fn encode_to_av1<P: rav1e::Pixel>(p: &Av1EncodeConfig, init: impl FnOnce(&mut Fr
                 },
                 _ => continue,
             },
-            Err(EncoderStatus::Encoded) |
-            Err(EncoderStatus::LimitReached) => break,
+            Err(EncoderStatus::Encoded) | Err(EncoderStatus::LimitReached) => break,
             Err(err) => Err(err)?,
         }
     }
