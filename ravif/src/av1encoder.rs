@@ -12,11 +12,11 @@ use crate::rayoff as rayon;
 /// For [`Encoder::with_internal_color_model`]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ColorModel {
-    /// Standard color space for photographic content. Usually the best choice.
+    /// Standard color model for photographic content. Usually the best choice.
     /// This library always uses full-resolution color (4:4:4).
     /// This library will automatically choose between BT.601 or BT.709.
     YCbCr,
-    /// RGB channels are encoded without colorspace transformation.
+    /// RGB channels are encoded without color space transformation.
     /// Usually results in larger file sizes, and is less compatible than `YCbCr`.
     /// Use only if the content really makes use of RGB, e.g. anaglyph images or RGB subpixel anti-aliasing.
     RGB,
@@ -149,6 +149,7 @@ impl Encoder {
     }
 
     #[doc(hidden)]
+    #[deprecated = "Renamed to `with_internal_color_model()`"]
     pub fn with_internal_color_space(self, color_model: ColorModel) -> Self {
         self.with_internal_color_model(color_model)
     }

@@ -15,6 +15,7 @@ pub use error::Error;
 pub use av1encoder::ColorModel;
 
 #[doc(hidden)]
+#[deprecated = "Renamed to `ColorModel`"]
 pub use ColorModel as ColorSpace;
 
 pub use av1encoder::AlphaColorMode;
