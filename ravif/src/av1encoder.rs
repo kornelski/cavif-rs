@@ -247,8 +247,8 @@ impl Encoder {
                     .filter(|px| px.a != 255)
                     .map(|px| if px.a == 0 { RGBA8::default() } else { RGBA8::new(
                         (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
-                        (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
-                        (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
+                        (u16::from(px.g) * 255 / u16::from(px.a)) as u8,
+                        (u16::from(px.b) * 255 / u16::from(px.a)) as u8,
                         px.a,
                     )})
                     .collect();
