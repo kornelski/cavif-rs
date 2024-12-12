@@ -1,13 +1,10 @@
-use imgref::Img;
-use imgref::ImgRef;
-use rgb::ComponentMap;
-use rgb::RGB;
-use rgb::RGBA8;
+use imgref::{Img, ImgRef};
+use rgb::{ComponentMap, RGB, RGBA8};
 
 #[inline]
 fn weighed_pixel(px: RGBA8) -> (u16, RGB<u32>) {
     if px.a == 0 {
-        return (0, RGB::new(0,0,0))
+        return (0, RGB::new(0, 0, 0));
     }
     let weight = 256 - u16::from(px.a);
     (weight, RGB::new(
@@ -85,8 +82,7 @@ fn blur_transparent_pixels(img: ImgRef<RGBA8>) -> Img<Vec<RGBA8>> {
         out.push(if mid.curr.a == 255 {
             mid.curr
         } else {
-            let sum: RGB<u16> =
-                chain(&top, &mid, &bot).map(|px| px.rgb().map(u16::from)).sum();
+            let sum: RGB<u16> = chain(&top, &mid, &bot).map(|px| px.rgb().map(u16::from)).sum();
             let mut avg = sum.map(|c| (c / 9) as u8);
             if mid.curr.a == 0 {
                 avg.with_alpha(0)
@@ -129,11 +125,11 @@ fn premultiplied_minmax(px: u8, alpha: u8) -> (u8, u8) {
 
 #[test]
 fn preminmax() {
-    assert_eq!((100,100), premultiplied_minmax(100, 255));
-    assert_eq!((78,100), premultiplied_minmax(100, 10));
-    assert_eq!(100*10/255, 78*10/255);
-    assert_eq!(100*10/255, 100*10/255);
-    assert_eq!((8,119), premultiplied_minmax(100, 2));
-    assert_eq!((16,239), premultiplied_minmax(100, 1));
-    assert_eq!((15,255), premultiplied_minmax(255, 1));
+    assert_eq!((100, 100), premultiplied_minmax(100, 255));
+    assert_eq!((78, 100), premultiplied_minmax(100, 10));
+    assert_eq!(100 * 10 / 255, 78 * 10 / 255);
+    assert_eq!(100 * 10 / 255, 100 * 10 / 255);
+    assert_eq!((8, 119), premultiplied_minmax(100, 2));
+    assert_eq!((16, 239), premultiplied_minmax(100, 1));
+    assert_eq!((15, 255), premultiplied_minmax(255, 1));
 }

@@ -11,8 +11,8 @@
 mod av1encoder;
 
 mod error;
-pub use error::Error;
 pub use av1encoder::ColorModel;
+pub use error::Error;
 
 #[doc(hidden)]
 #[deprecated = "Renamed to `ColorModel`"]

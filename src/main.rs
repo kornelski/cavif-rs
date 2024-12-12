@@ -1,14 +1,10 @@
-use clap::ArgAction;
-use clap::value_parser;
-use clap::{Arg, Command};
+use clap::{value_parser, Arg, ArgAction, Command};
 use imgref::ImgVec;
 use ravif::{AlphaColorMode, BitDepth, ColorModel, EncodedImage, Encoder, RGBA8};
 use rayon::prelude::*;
 use std::fs;
-use std::io::Read;
-use std::io::Write;
-use std::path::Path;
-use std::path::PathBuf;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -119,7 +115,7 @@ fn run() -> Result<(), BoxError> {
         }
     });
     let quality = *args.get_one::<f32>("quality").expect("default");
-    let alpha_quality = ((quality + 100.)/2.).min(quality + quality/4. + 2.);
+    let alpha_quality = ((quality + 100.) / 2.).min(quality + quality / 4. + 2.);
     let speed: u8 = *args.get_one::<u8>("speed").expect("default");
     let overwrite = args.get_flag("overwrite");
     let quiet = args.get_flag("quiet");
@@ -220,33 +216,30 @@ fn run() -> Result<(), BoxError> {
                 }
                 fs::write(p, avif_file)
             },
-            MaybePath::Stdio => {
-                std::io::stdout().write_all(&avif_file)
-            },
-        }.map_err(|e| format!("Unable to write output image: {e}"))?;
+            MaybePath::Stdio => std::io::stdout().write_all(&avif_file),
+        }
+        .map_err(|e| format!("Unable to write output image: {e}"))?;
         Ok(())
     };
 
     let failures = files.into_par_iter().map(|path| {
-        let tmp;
-        let (data, path_str): (_, &dyn std::fmt::Display) = match path {
-            MaybePath::Stdio => {
-                let mut data = Vec::new();
-                std::io::stdin().read_to_end(&mut data)?;
-                (data, &"stdin")
-            },
-            MaybePath::Path(ref path) => {
-                let data = fs::read(path)
-                    .map_err(|e| format!("Unable to read input image {}: {e}", path.display()))?;
-                tmp = path.display();
-                (data, &tmp)
-            },
-        };
-        process(data, &path)
-            .map_err(|e| BoxError::from(format!("{path_str}: error: {e}")))
-    })
-    .filter_map(|res| res.err())
-    .collect::<Vec<BoxError>>();
+            let tmp;
+            let (data, path_str): (_, &dyn std::fmt::Display) = match path {
+                MaybePath::Stdio => {
+                    let mut data = Vec::new();
+                    std::io::stdin().read_to_end(&mut data)?;
+                    (data, &"stdin")
+                },
+                MaybePath::Path(ref path) => {
+                    let data = fs::read(path).map_err(|e| format!("Unable to read input image {}: {e}", path.display()))?;
+                    tmp = path.display();
+                    (data, &tmp)
+                },
+            };
+            process(data, &path).map_err(|e| BoxError::from(format!("{path_str}: error: {e}")))
+        })
+        .filter_map(|res| res.err())
+        .collect::<Vec<BoxError>>();
 
     if !failures.is_empty() {
         if !quiet {
