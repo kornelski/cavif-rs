@@ -45,6 +45,8 @@ pub enum BitDepth {
     #[default]
     Eight,
     Ten,
+    /// Pick 8 or 10 depending on image format and decoder compatibility
+    Auto,
 }
 
 /// The newly-created image file + extra info FYI
@@ -213,7 +215,7 @@ impl Encoder {
             ColorModel::RGB => MatrixCoefficients::Identity,
         };
         match self.depth {
-            BitDepth::Eight => {
+            BitDepth::Eight | BitDepth::Auto => {
                 let planes = buffer.pixels().map(|px| {
                     let (y, u, v) = match self.color_model {
                         ColorModel::YCbCr => rgb_to_8_bit_ycbcr(px.rgb(), BT601),
@@ -323,7 +325,7 @@ pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
                     matrix_coefficients,
                 )
             }
-            BitDepth::Ten => {
+            BitDepth::Ten | BitDepth::Auto => {
                 let planes = pixels.map(|px| {
                     let (y, u, v) = match self.color_model {
                         ColorModel::YCbCr => rgb_to_10_bit_ycbcr(px, BT601),
