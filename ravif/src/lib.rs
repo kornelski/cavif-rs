@@ -11,15 +11,15 @@
 mod av1encoder;
 
 mod error;
-pub use error::Error;
 pub use av1encoder::ColorModel;
+pub use error::Error;
 
 #[doc(hidden)]
 pub use ColorModel as ColorSpace;
 
 pub use av1encoder::AlphaColorMode;
-pub use av1encoder::Encoder;
 pub use av1encoder::EncodedImage;
+pub use av1encoder::Encoder;
 #[doc(inline)]
 pub use rav1e::prelude::MatrixCoefficients;
 
@@ -33,7 +33,9 @@ pub use rgb::{RGB8, RGBA8};
 #[cfg(not(feature = "threading"))]
 mod rayoff {
     pub fn current_num_threads() -> usize {
-        std::thread::available_parallelism().map(|v| v.get()).unwrap_or(1)
+        std::thread::available_parallelism()
+            .map(|v| v.get())
+            .unwrap_or(1)
     }
 
     pub fn join<A, B>(a: impl FnOnce() -> A, b: impl FnOnce() -> B) -> (A, B) {

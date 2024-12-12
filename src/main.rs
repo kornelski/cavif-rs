@@ -1,8 +1,8 @@
-use clap::ArgAction;
 use clap::value_parser;
+use clap::ArgAction;
 use clap::{Arg, Command};
 use imgref::ImgVec;
-use ravif::{AlphaColorMode, ColorModel, Encoder, EncodedImage, RGBA8};
+use ravif::{AlphaColorMode, ColorModel, EncodedImage, Encoder, RGBA8};
 use rayon::prelude::*;
 use std::fs;
 use std::io::Read;
@@ -112,14 +112,12 @@ fn run() -> Result<(), BoxError> {
             .help("One or more JPEG or PNG files to convert. \"-\" is interpreted as stdin/stdout."))
         .get_matches();
 
-    let output = args.get_one::<PathBuf>("output").map(|s| {
-        match s {
-            s if s.as_os_str() == "-" => MaybePath::Stdio,
-            s => MaybePath::Path(PathBuf::from(s)),
-        }
+    let output = args.get_one::<PathBuf>("output").map(|s| match s {
+        s if s.as_os_str() == "-" => MaybePath::Stdio,
+        s => MaybePath::Path(PathBuf::from(s)),
     });
     let quality = *args.get_one::<f32>("quality").expect("default");
-    let alpha_quality = ((quality + 100.)/2.).min(quality + quality/4. + 2.);
+    let alpha_quality = ((quality + 100.) / 2.).min(quality + quality / 4. + 2.);
     let speed: u8 = *args.get_one::<u8>("speed").expect("default");
     let overwrite = args.get_flag("overwrite");
     let quiet = args.get_flag("quiet");
@@ -138,7 +136,9 @@ fn run() -> Result<(), BoxError> {
         _ => None,
     };
 
-    let files = args.get_many::<PathBuf>("IMAGES").ok_or("Please specify image paths to convert")?;
+    let files = args
+        .get_many::<PathBuf>("IMAGES")
+        .ok_or("Please specify image paths to convert")?;
     let files: Vec<_> = files
         .filter(|pathstr| {
             let path = Path::new(&pathstr);
@@ -178,7 +178,7 @@ fn run() -> Result<(), BoxError> {
                 let _ = fs::create_dir_all(path);
             }
             files.len() > 1 || path.is_dir()
-        },
+        }
         _ => false,
     };
 
@@ -194,15 +194,14 @@ fn run() -> Result<(), BoxError> {
                     output.clone()
                 }
             }),
-            (None, MaybePath::Stdio) |
-            (Some(MaybePath::Stdio), _) => MaybePath::Stdio,
+            (None, MaybePath::Stdio) | (Some(MaybePath::Stdio), _) => MaybePath::Stdio,
             (Some(MaybePath::Path(output)), MaybePath::Stdio) => MaybePath::Path(output.clone()),
         };
         match out_path {
             MaybePath::Path(ref p) if !overwrite && p.exists() => {
                 return Err(format!("{} already exists; skipping", p.display()).into());
-            },
-            _ => {},
+            }
+            _ => {}
         }
         let enc = Encoder::new()
             .with_quality(quality)
@@ -210,43 +209,58 @@ fn run() -> Result<(), BoxError> {
             .with_speed(speed)
             .with_alpha_quality(alpha_quality)
             .with_internal_color_model(color_model)
-            .with_alpha_color_mode(if dirty_alpha { AlphaColorMode::UnassociatedDirty } else { AlphaColorMode::UnassociatedClean })
+            .with_alpha_color_mode(if dirty_alpha {
+                AlphaColorMode::UnassociatedDirty
+            } else {
+                AlphaColorMode::UnassociatedClean
+            })
             .with_num_threads(threads.filter(|&n| n > 0).map(usize::from));
-        let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc.encode_rgba(img.as_ref())?;
+        let EncodedImage {
+            avif_file,
+            color_byte_size,
+            alpha_byte_size,
+            ..
+        } = enc.encode_rgba(img.as_ref())?;
         match out_path {
             MaybePath::Path(ref p) => {
                 if !quiet {
-                    println!("{}: {}KB ({color_byte_size}B color, {alpha_byte_size}B alpha, {}B HEIF)", p.display(), (avif_file.len()+999)/1000, avif_file.len() - color_byte_size - alpha_byte_size);
+                    println!(
+                        "{}: {}KB ({color_byte_size}B color, {alpha_byte_size}B alpha, {}B HEIF)",
+                        p.display(),
+                        (avif_file.len() + 999) / 1000,
+                        avif_file.len() - color_byte_size - alpha_byte_size
+                    );
                 }
                 fs::write(p, avif_file)
-            },
-            MaybePath::Stdio => {
-                std::io::stdout().write_all(&avif_file)
-            },
-        }.map_err(|e| format!("Unable to write output image: {e}"))?;
+            }
+            MaybePath::Stdio => std::io::stdout().write_all(&avif_file),
+        }
+        .map_err(|e| format!("Unable to write output image: {e}"))?;
         Ok(())
     };
 
-    let failures = files.into_par_iter().map(|path| {
-        let tmp;
-        let (data, path_str): (_, &dyn std::fmt::Display) = match path {
-            MaybePath::Stdio => {
-                let mut data = Vec::new();
-                std::io::stdin().read_to_end(&mut data)?;
-                (data, &"stdin")
-            },
-            MaybePath::Path(ref path) => {
-                let data = fs::read(path)
-                    .map_err(|e| format!("Unable to read input image {}: {e}", path.display()))?;
-                tmp = path.display();
-                (data, &tmp)
-            },
-        };
-        process(data, &path)
-            .map_err(|e| BoxError::from(format!("{path_str}: error: {e}")))
-    })
-    .filter_map(|res| res.err())
-    .collect::<Vec<BoxError>>();
+    let failures = files
+        .into_par_iter()
+        .map(|path| {
+            let tmp;
+            let (data, path_str): (_, &dyn std::fmt::Display) = match path {
+                MaybePath::Stdio => {
+                    let mut data = Vec::new();
+                    std::io::stdin().read_to_end(&mut data)?;
+                    (data, &"stdin")
+                }
+                MaybePath::Path(ref path) => {
+                    let data = fs::read(path).map_err(|e| {
+                        format!("Unable to read input image {}: {e}", path.display())
+                    })?;
+                    tmp = path.display();
+                    (data, &tmp)
+                }
+            };
+            process(data, &path).map_err(|e| BoxError::from(format!("{path_str}: error: {e}")))
+        })
+        .filter_map(|res| res.err())
+        .collect::<Vec<BoxError>>();
 
     if !failures.is_empty() {
         if !quiet {
@@ -265,14 +279,52 @@ fn load_rgba(data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, Bo
 
     let img = load_image::load_data(data)?.into_imgvec();
     let mut img = match img {
-        load_image::export::imgref::ImgVecKind::RGB8(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.with_alpha(255)).collect()),
+        load_image::export::imgref::ImgVecKind::RGB8(img) => {
+            img.map_buf(|buf| buf.into_iter().map(|px| px.with_alpha(255)).collect())
+        }
         load_image::export::imgref::ImgVecKind::RGBA8(img) => img,
-        load_image::export::imgref::ImgVecKind::RGB16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8).with_alpha(255)).collect()),
-        load_image::export::imgref::ImgVecKind::RGBA16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8)).collect()),
-        load_image::export::imgref::ImgVecKind::GRAY8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.0; RGBA8::new(c,c,c,255) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAY16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.0>>8) as u8; RGBA8::new(c,c,c,255) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAYA8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.0; RGBA8::new(c,c,c,g.1) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAYA16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.0>>8) as u8; RGBA8::new(c,c,c,(g.1>>8) as u8) }).collect()),
+        load_image::export::imgref::ImgVecKind::RGB16(img) => img.map_buf(|buf| {
+            buf.into_iter()
+                .map(|px| px.map(|c| (c >> 8) as u8).with_alpha(255))
+                .collect()
+        }),
+        load_image::export::imgref::ImgVecKind::RGBA16(img) => img.map_buf(|buf| {
+            buf.into_iter()
+                .map(|px| px.map(|c| (c >> 8) as u8))
+                .collect()
+        }),
+        load_image::export::imgref::ImgVecKind::GRAY8(img) => img.map_buf(|buf| {
+            buf.into_iter()
+                .map(|g| {
+                    let c = g.0;
+                    RGBA8::new(c, c, c, 255)
+                })
+                .collect()
+        }),
+        load_image::export::imgref::ImgVecKind::GRAY16(img) => img.map_buf(|buf| {
+            buf.into_iter()
+                .map(|g| {
+                    let c = (g.0 >> 8) as u8;
+                    RGBA8::new(c, c, c, 255)
+                })
+                .collect()
+        }),
+        load_image::export::imgref::ImgVecKind::GRAYA8(img) => img.map_buf(|buf| {
+            buf.into_iter()
+                .map(|g| {
+                    let c = g.0;
+                    RGBA8::new(c, c, c, g.1)
+                })
+                .collect()
+        }),
+        load_image::export::imgref::ImgVecKind::GRAYA16(img) => img.map_buf(|buf| {
+            buf.into_iter()
+                .map(|g| {
+                    let c = (g.0 >> 8) as u8;
+                    RGBA8::new(c, c, c, (g.1 >> 8) as u8)
+                })
+                .collect()
+        }),
     };
 
     if premultiplied_alpha {
