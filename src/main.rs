@@ -2,7 +2,7 @@ use clap::ArgAction;
 use clap::value_parser;
 use clap::{Arg, Command};
 use imgref::ImgVec;
-use ravif::{AlphaColorMode, ColorModel, Encoder, EncodedImage, RGBA8};
+use ravif::{AlphaColorMode, BitDepth, ColorModel, EncodedImage, Encoder, RGBA8};
 use rayon::prelude::*;
 use std::fs;
 use std::io::Read;
@@ -133,9 +133,9 @@ fn run() -> Result<(), BoxError> {
     };
 
     let depth = match args.get_one::<String>("depth").expect("default").as_str() {
-        "8" => Some(8),
-        "10" => Some(10),
-        _ => None,
+        "8" => BitDepth::Eight,
+        "10" => BitDepth::Ten,
+        _ => BitDepth::Auto,
     };
 
     let files = args.get_many::<PathBuf>("IMAGES").ok_or("Please specify image paths to convert")?;
@@ -206,7 +206,7 @@ fn run() -> Result<(), BoxError> {
         }
         let enc = Encoder::new()
             .with_quality(quality)
-            .with_depth(depth)
+            .with_bit_depth(depth)
             .with_speed(speed)
             .with_alpha_quality(alpha_quality)
             .with_internal_color_model(color_model)

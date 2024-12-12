@@ -109,11 +109,16 @@ impl Encoder {
         self
     }
 
+    #[doc(hidden)]
+    #[deprecated(note = "Renamed to with_bit_depth")]
+    pub fn with_depth(self, depth: Option<u8>) -> Self {
+        self.with_bit_depth(depth.map(|d| if d >= 10 { BitDepth::Ten } else { BitDepth::Eight }).unwrap_or(BitDepth::Auto))
+    }
+
     /// Depth 8 or 10.
     #[inline(always)]
-    #[track_caller]
     #[must_use]
-    pub fn with_depth(mut self, depth: BitDepth) -> Self {
+    pub fn with_bit_depth(mut self, depth: BitDepth) -> Self {
         self.depth = depth;
         self
     }
@@ -344,7 +349,7 @@ pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
             }
         }
     }
-}
+
 
 /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
 /// with sRGB transfer characteristics and color primaries.

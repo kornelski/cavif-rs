@@ -18,9 +18,7 @@ pub use av1encoder::ColorModel;
 #[deprecated = "Renamed to `ColorModel`"]
 pub use ColorModel as ColorSpace;
 
-pub use av1encoder::AlphaColorMode;
-pub use av1encoder::Encoder;
-pub use av1encoder::EncodedImage;
+pub use av1encoder::{AlphaColorMode, BitDepth, EncodedImage, Encoder};
 #[doc(inline)]
 pub use rav1e::prelude::MatrixCoefficients;
 
