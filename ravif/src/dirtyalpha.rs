@@ -7,13 +7,17 @@ use rgb::RGBA8;
 #[inline]
 fn weighed_pixel(px: RGBA8) -> (u16, RGB<u32>) {
     if px.a == 0 {
-        return (0, RGB::new(0,0,0))
+        return (0, RGB::new(0, 0, 0));
     }
     let weight = 256 - u16::from(px.a);
-    (weight, RGB::new(
-        u32::from(px.r) * u32::from(weight),
-        u32::from(px.g) * u32::from(weight),
-        u32::from(px.b) * u32::from(weight)))
+    (
+        weight,
+        RGB::new(
+            u32::from(px.r) * u32::from(weight),
+            u32::from(px.g) * u32::from(weight),
+            u32::from(px.b) * u32::from(weight),
+        ),
+    )
 }
 
 /// Clear/change RGB components of fully-transparent RGBA pixels to make them cheaper to encode with AV1
@@ -38,7 +42,12 @@ pub(crate) fn blurred_dirty_alpha(img: ImgRef<RGBA8>) -> Option<Img<Vec<RGBA8>>>
         return None; // opaque image
     }
 
-    let neutral_alpha = RGBA8::new((sum.r / weights) as u8, (sum.g / weights) as u8, (sum.b / weights) as u8, 0);
+    let neutral_alpha = RGBA8::new(
+        (sum.r / weights) as u8,
+        (sum.g / weights) as u8,
+        (sum.b / weights) as u8,
+        0,
+    );
     let img2 = bleed_opaque_color(img, neutral_alpha);
     Some(blur_transparent_pixels(img2.as_ref()))
 }
@@ -51,13 +60,14 @@ fn bleed_opaque_color(img: ImgRef<RGBA8>, bg: RGBA8) -> Img<Vec<RGBA8>> {
         out.push(if mid.curr.a == 255 {
             mid.curr
         } else {
-            let (weights, sum) = chain(&top, &mid, &bot)
-                .map(|c| weighed_pixel(*c))
-                .fold((0u32, RGB::new(0,0,0)), |mut sum, item| {
+            let (weights, sum) = chain(&top, &mid, &bot).map(|c| weighed_pixel(*c)).fold(
+                (0u32, RGB::new(0, 0, 0)),
+                |mut sum, item| {
                     sum.0 += u32::from(item.0);
                     sum.1 += item.1;
                     sum
-                });
+                },
+            );
             if weights == 0 {
                 bg
             } else {
@@ -85,8 +95,9 @@ fn blur_transparent_pixels(img: ImgRef<RGBA8>) -> Img<Vec<RGBA8>> {
         out.push(if mid.curr.a == 255 {
             mid.curr
         } else {
-            let sum: RGB<u16> =
-                chain(&top, &mid, &bot).map(|px| px.rgb().map(u16::from)).sum();
+            let sum: RGB<u16> = chain(&top, &mid, &bot)
+                .map(|px| px.rgb().map(u16::from))
+                .sum();
             let mut avg = sum.map(|c| (c / 9) as u8);
             if mid.curr.a == 0 {
                 avg.with_alpha(0)
@@ -104,7 +115,11 @@ fn blur_transparent_pixels(img: ImgRef<RGBA8>) -> Img<Vec<RGBA8>> {
 }
 
 #[inline(always)]
-fn chain<'a, T>(top: &'a loop9::Triple<T>, mid: &'a loop9::Triple<T>, bot: &'a loop9::Triple<T>) -> impl Iterator<Item = &'a T> + 'a {
+fn chain<'a, T>(
+    top: &'a loop9::Triple<T>,
+    mid: &'a loop9::Triple<T>,
+    bot: &'a loop9::Triple<T>,
+) -> impl Iterator<Item = &'a T> + 'a {
     top.iter().chain(mid.iter()).chain(bot.iter())
 }
 
@@ -129,11 +144,11 @@ fn premultiplied_minmax(px: u8, alpha: u8) -> (u8, u8) {
 
 #[test]
 fn preminmax() {
-    assert_eq!((100,100), premultiplied_minmax(100, 255));
-    assert_eq!((78,100), premultiplied_minmax(100, 10));
-    assert_eq!(100*10/255, 78*10/255);
-    assert_eq!(100*10/255, 100*10/255);
-    assert_eq!((8,119), premultiplied_minmax(100, 2));
-    assert_eq!((16,239), premultiplied_minmax(100, 1));
-    assert_eq!((15,255), premultiplied_minmax(255, 1));
+    assert_eq!((100, 100), premultiplied_minmax(100, 255));
+    assert_eq!((78, 100), premultiplied_minmax(100, 10));
+    assert_eq!(100 * 10 / 255, 78 * 10 / 255);
+    assert_eq!(100 * 10 / 255, 100 * 10 / 255);
+    assert_eq!((8, 119), premultiplied_minmax(100, 2));
+    assert_eq!((16, 239), premultiplied_minmax(100, 1));
+    assert_eq!((15, 255), premultiplied_minmax(255, 1));
 }
