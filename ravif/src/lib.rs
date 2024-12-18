@@ -27,7 +27,7 @@ mod dirtyalpha;
 #[doc(no_inline)]
 pub use imgref::Img;
 #[doc(no_inline)]
-pub use rgb::{RGB8, RGBA8};
+pub use rgb::{RGB16, RGB8, RGBA16, RGBA8};
 
 #[cfg(not(feature = "threading"))]
 mod rayoff {

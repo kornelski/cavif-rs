@@ -1,66 +1,85 @@
-use imgref::{Img, ImgRef};
-use rgb::{ComponentMap, RGB, RGBA8};
+use imgref::Img;
+use imgref::ImgRef;
+use rav1e::Pixel;
+use rgb::ComponentMap;
+use rgb::Rgb;
+use rgb::Rgba;
 
 #[inline]
-fn weighed_pixel(px: RGBA8) -> (u16, RGB<u32>) {
-    if px.a == 0 {
-        return (0, RGB::new(0, 0, 0));
+fn weighed_pixel<P: Pixel + Default>(px: Rgba<P>) -> (P, Rgb<P>) {
+    if px.a == P::cast_from(0) {
+        return (px.a, Rgb::new(px.a, px.a, px.a));
     }
-    let weight = 256 - u16::from(px.a);
-    (weight, RGB::new(
-        u32::from(px.r) * u32::from(weight),
-        u32::from(px.g) * u32::from(weight),
-        u32::from(px.b) * u32::from(weight)))
+    let weight = P::cast_from(256) - px.a;
+    (
+        weight,
+        Rgb::new(px.r * weight, px.g * weight, px.b * weight),
+    )
 }
 
 /// Clear/change RGB components of fully-transparent RGBA pixels to make them cheaper to encode with AV1
-pub(crate) fn blurred_dirty_alpha(img: ImgRef<RGBA8>) -> Option<Img<Vec<RGBA8>>> {
+pub(crate) fn blurred_dirty_alpha<P: Pixel + Default>(
+    img: ImgRef<Rgba<P>>,
+) -> Option<Img<Vec<Rgba<P>>>> {
     // get dominant visible transparent color (excluding opaque pixels)
-    let mut sum = RGB::new(0, 0, 0);
+    let mut sum = Rgb::new(0, 0, 0);
     let mut weights = 0;
 
     // Only consider colors around transparent images
     // (e.g. solid semitransparent area doesn't need to contribute)
     loop9::loop9_img(img, |_, _, top, mid, bot| {
-        if mid.curr.a == 255 || mid.curr.a == 0 {
+        if mid.curr.a == P::cast_from(255) || mid.curr.a == P::cast_from(0) {
             return;
         }
-        if chain(&top, &mid, &bot).any(|px| px.a == 0) {
+        if chain(&top, &mid, &bot).any(|px| px.a == P::cast_from(0)) {
             let (w, px) = weighed_pixel(mid.curr);
-            weights += u64::from(w);
-            sum += px.map(u64::from);
+            weights += Into::<u32>::into(w) as u64;
+            sum += Rgb::new(
+                Into::<u32>::into(px.r) as u64,
+                Into::<u32>::into(px.g) as u64,
+                Into::<u32>::into(px.b) as u64,
+            );
         }
     });
     if weights == 0 {
         return None; // opaque image
     }
 
-    let neutral_alpha = RGBA8::new((sum.r / weights) as u8, (sum.g / weights) as u8, (sum.b / weights) as u8, 0);
+    let neutral_alpha = Rgba::new(
+        P::cast_from((sum.r / weights) as u8),
+        P::cast_from((sum.g / weights) as u8),
+        P::cast_from((sum.b / weights) as u8),
+        P::cast_from(0),
+    );
     let img2 = bleed_opaque_color(img, neutral_alpha);
     Some(blur_transparent_pixels(img2.as_ref()))
 }
 
 /// copy color from opaque pixels to transparent pixels
 /// (so that when edges get crushed by compression, the distortion will be away from visible edge)
-fn bleed_opaque_color(img: ImgRef<RGBA8>, bg: RGBA8) -> Img<Vec<RGBA8>> {
+fn bleed_opaque_color<P: Pixel + Default>(img: ImgRef<Rgba<P>>, bg: Rgba<P>) -> Img<Vec<Rgba<P>>> {
     let mut out = Vec::with_capacity(img.width() * img.height());
     loop9::loop9_img(img, |_, _, top, mid, bot| {
-        out.push(if mid.curr.a == 255 {
+        out.push(if mid.curr.a == P::cast_from(255) {
             mid.curr
         } else {
-            let (weights, sum) = chain(&top, &mid, &bot)
-                .map(|c| weighed_pixel(*c))
-                .fold((0u32, RGB::new(0,0,0)), |mut sum, item| {
-                    sum.0 += u32::from(item.0);
+            let (weights, sum) = chain(&top, &mid, &bot).map(|c| weighed_pixel(*c)).fold(
+                (
+                    0u32,
+                    Rgb::new(P::cast_from(0), P::cast_from(0), P::cast_from(0)),
+                ),
+                |mut sum, item| {
+                    sum.0 += Into::<u32>::into(item.0);
                     sum.1 += item.1;
                     sum
-                });
+                },
+            );
             if weights == 0 {
                 bg
             } else {
-                let mut avg = sum.map(|c| (c / weights) as u8);
-                if mid.curr.a == 0 {
-                    avg.with_alpha(0)
+                let mut avg = sum.map(|c| P::cast_from(Into::<u32>::into(c) / weights));
+                if mid.curr.a == P::cast_from(0) {
+                    avg.with_alpha(mid.curr.a)
                 } else {
                     // also change non-transparent colors, but only within range where
                     // rounding caused by premultiplied alpha would land on the same color
@@ -76,16 +95,16 @@ fn bleed_opaque_color(img: ImgRef<RGBA8>, bg: RGBA8) -> Img<Vec<RGBA8>> {
 }
 
 /// ensure there are no sharp edges created by the cleared alpha
-fn blur_transparent_pixels(img: ImgRef<RGBA8>) -> Img<Vec<RGBA8>> {
+fn blur_transparent_pixels<P: Pixel + Default>(img: ImgRef<Rgba<P>>) -> Img<Vec<Rgba<P>>> {
     let mut out = Vec::with_capacity(img.width() * img.height());
     loop9::loop9_img(img, |_, _, top, mid, bot| {
-        out.push(if mid.curr.a == 255 {
+        out.push(if mid.curr.a == P::cast_from(255) {
             mid.curr
         } else {
-            let sum: RGB<u16> = chain(&top, &mid, &bot).map(|px| px.rgb().map(u16::from)).sum();
-            let mut avg = sum.map(|c| (c / 9) as u8);
-            if mid.curr.a == 0 {
-                avg.with_alpha(0)
+            let sum: Rgb<P> = chain(&top, &mid, &bot).map(|px| px.rgb()).sum();
+            let mut avg = sum.map(|c| (c / P::cast_from(9)));
+            if mid.curr.a == P::cast_from(0) {
+                avg.with_alpha(mid.curr.a)
             } else {
                 // also change non-transparent colors, but only within range where
                 // rounding caused by premultiplied alpha would land on the same color
@@ -100,27 +119,42 @@ fn blur_transparent_pixels(img: ImgRef<RGBA8>) -> Img<Vec<RGBA8>> {
 }
 
 #[inline(always)]
-fn chain<'a, T>(top: &'a loop9::Triple<T>, mid: &'a loop9::Triple<T>, bot: &'a loop9::Triple<T>) -> impl Iterator<Item = &'a T> + 'a {
+fn chain<'a, T>(
+    top: &'a loop9::Triple<T>,
+    mid: &'a loop9::Triple<T>,
+    bot: &'a loop9::Triple<T>,
+) -> impl Iterator<Item = &'a T> + 'a {
     top.iter().chain(mid.iter()).chain(bot.iter())
 }
 
 #[inline]
-fn clamp(px: u8, (min, max): (u8, u8)) -> u8 {
-    px.max(min).min(max)
+fn clamp<P: Pixel + Default>(px: P, (min, max): (P, P)) -> P {
+    P::cast_from(
+        Into::<u32>::into(px)
+            .max(Into::<u32>::into(min))
+            .min(Into::<u32>::into(max)),
+    )
 }
 
 /// safe range to change px color given its alpha
 /// (mostly-transparent colors tolerate more variation)
 #[inline]
-fn premultiplied_minmax(px: u8, alpha: u8) -> (u8, u8) {
-    let alpha = u16::from(alpha);
-    let rounded = u16::from(px) * alpha / 255 * 255;
+fn premultiplied_minmax<P, T>(px: P, alpha: T) -> (P, T)
+where
+    P: Pixel + Default,
+    T: Pixel + Default,
+{
+    let alpha = Into::<u32>::into(alpha);
+    let rounded = Into::<u32>::into(px) * alpha / 255 * 255;
 
     // leave some spare room for rounding
-    let low = ((rounded + 16) / alpha) as u8;
-    let hi = ((rounded + 239) / alpha) as u8;
+    let low = (rounded + 16) / alpha;
+    let hi = (rounded + 239) / alpha;
 
-    (low.min(px), hi.max(px))
+    (
+        P::cast_from(low).min(px),
+        T::cast_from(hi).max(T::cast_from(Into::<u32>::into(px))),
+    )
 }
 
 #[test]
