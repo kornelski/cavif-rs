@@ -235,20 +235,21 @@ impl Encoder {
     }
 
     fn convert_alpha<P: Pixel + Default>(&self, in_buffer: Img<&[Rgba<P>]>) -> Option<ImgVec<Rgba<P>>> {
+        let max_value = (1 << self.depth.to_usize()) -1;
         match self.alpha_color_mode {
             AlphaColorMode::UnassociatedDirty => None,
             AlphaColorMode::UnassociatedClean => blurred_dirty_alpha(in_buffer),
             AlphaColorMode::Premultiplied => {
                 let prem = in_buffer
                     .pixels()
-                    .filter(|px| px.a != P::cast_from(255))
+                    .filter(|px| px.a != P::cast_from(max_value))
                     .map(|px| {
                         if Into::<u32>::into(px.a) == 0 {
                             Rgba::new(px.a, px.a, px.a, px.a)
                         } else {
-                            let r = px.r * P::cast_from(255) / px.a;
-                            let g = px.g * P::cast_from(255) / px.a;
-                            let b = px.b * P::cast_from(255) / px.a;
+                            let r = px.r * P::cast_from(max_value) / px.a;
+                            let g = px.g * P::cast_from(max_value) / px.a;
+                            let b = px.b * P::cast_from(max_value) / px.a;
                             Rgba::new(r, g, b, px.a)
                         }
                     })
