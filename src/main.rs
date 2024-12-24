@@ -1,6 +1,6 @@
 use clap::{value_parser, Arg, ArgAction, Command};
 use imgref::ImgVec;
-use ravif::{AlphaColorMode, BitDepth, ColorModel, EncodedImage, Encoder, RGBA8};
+use ravif::{AlphaColorMode, BitDepth, ColorModel, ColorSpace, EncodedImage, Encoder, RGBA8};
 use rayon::prelude::*;
 use std::fs;
 use std::io::{Read, Write};
@@ -41,11 +41,27 @@ fn parse_speed(arg: &str) -> Result<u8, String> {
     Ok(s)
 }
 
+fn parse_color_space(s: &str) -> Result<ColorSpace, String> {
+    match s.to_lowercase().as_str() {
+        "srgb" => Ok(ColorSpace::Srgb),
+        "displayp3" => Ok(ColorSpace::DisplayP3),
+        "rec2020pq" => Ok(ColorSpace::Rec2020Pq),
+        _ => Err(format!("invalid color-space: {}", s)),
+    }
+}
+
 fn run() -> Result<(), BoxError> {
     let args = Command::new("cavif-rs")
         .version(clap::crate_version!())
         .author("Kornel Lesiński <kornel@imageoptim.com>")
         .about("Convert JPEG/PNG images to AVIF image format (based on AV1/rav1e)")
+        .arg(Arg::new("color-space")
+            .short('C')
+            .long("color-space")
+            .value_name("srgb/displayp3/rec2020pq")
+            .value_parser(parse_color_space)
+            .required(true)
+            .help("The color space passed values are in [possible values: srgb, displayp3, rec2020pq]"))
         .arg(Arg::new("quality")
             .short('Q')
             .long("quality")
@@ -131,8 +147,10 @@ fn run() -> Result<(), BoxError> {
     let depth = match args.get_one::<String>("depth").expect("default").as_str() {
         "8" => BitDepth::Eight,
         "10" => BitDepth::Ten,
-        _ => BitDepth::Auto,
+        _ => BitDepth::Ten,
     };
+
+    let color_space = args.get_one::<ColorSpace>("color-space").expect("default");
 
     let files = args.get_many::<PathBuf>("IMAGES").ok_or("Please specify image paths to convert")?;
     let files: Vec<_> = files
@@ -200,7 +218,7 @@ fn run() -> Result<(), BoxError> {
             },
             _ => {},
         }
-        let enc = Encoder::new()
+        let enc = Encoder::new(*color_space)
             .with_quality(quality)
             .with_bit_depth(depth)
             .with_speed(speed)

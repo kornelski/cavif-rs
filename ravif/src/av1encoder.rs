@@ -1,11 +1,104 @@
 #![allow(deprecated)]
+
 use crate::dirtyalpha::blurred_dirty_alpha;
 use crate::error::Error;
 #[cfg(not(feature = "threading"))]
 use crate::rayoff as rayon;
 use imgref::{Img, ImgVec};
 use rav1e::prelude::*;
-use rgb::{RGB8, RGBA8};
+use rgb::{Rgb, Rgba};
+use rav1e::color::{TransferCharacteristics, MatrixCoefficients};
+
+#[derive(Debug,Clone, Copy)]
+pub enum ColorSpace {
+    Srgb,
+    DisplayP3,
+    Rec2020Pq,
+}
+
+fn to_avif_serialize(coefficients: MatrixCoefficients) -> avif_serialize::constants::MatrixCoefficients {
+    match coefficients {
+        MatrixCoefficients::Identity => avif_serialize::constants::MatrixCoefficients::Rgb,
+        MatrixCoefficients::BT709 => avif_serialize::constants::MatrixCoefficients::Bt709,
+        MatrixCoefficients::BT601 => avif_serialize::constants::MatrixCoefficients::Bt601,
+        MatrixCoefficients::YCgCo => avif_serialize::constants::MatrixCoefficients::Ycgco,
+        MatrixCoefficients::BT2020NCL => avif_serialize::constants::MatrixCoefficients::Bt2020Ncl,
+        MatrixCoefficients::BT2020CL => avif_serialize::constants::MatrixCoefficients::Bt2020Cl,
+        _ => avif_serialize::constants::MatrixCoefficients::Unspecified,
+    }
+}
+
+// From ITU-T H.273, Table 4 + Equations 45 to 47
+#[inline]
+fn enum_to_values(matrix_coefficients: MatrixCoefficients) -> [f32; 3] {
+    let r_g = match matrix_coefficients {
+        MatrixCoefficients::Identity => [0.0; 2],
+        MatrixCoefficients::BT709 => [0.2126, 0.0722],
+        MatrixCoefficients::BT470BG => [0.3, 0.11],
+        MatrixCoefficients::BT601 => [0.299, 0.114],
+        MatrixCoefficients::SMPTE240 => [ 0.212,  0.087 ],
+        MatrixCoefficients::BT2020NCL => [ 0.2627, 0.0593 ],
+        MatrixCoefficients::Unspecified => unreachable!("This is unspecified."),
+        MatrixCoefficients::FCC => unimplemented!("For future use by ITU-T | ISO/IEC"),
+        _ => unimplemented!(),
+    };
+
+    [r_g[0], 1.0 - r_g[0] - r_g[1], r_g[1]]
+}
+
+/// Converts RGB to YCbCr based on MatrixCoefficients. Doesn't apply any transformation when [`MatrixCoefficients::Unspecified`] is set.
+fn apply_matrix_transformations<P: Pixel>(coefficients: MatrixCoefficients, bit_depth: BitDepth, px: Rgb<P>) -> [P; 3] {
+    let depth = bit_depth.to_usize();
+    let max_value = ((1 << depth) - 1) as f32;
+    let coefficients = enum_to_values(coefficients);
+
+    let rf = (u32::cast_from(px.r) as f32) / max_value;
+    let gf = (u32::cast_from(px.g) as f32) / max_value;
+    let bf = (u32::cast_from(px.b) as f32) / max_value;
+
+    let y = coefficients[0] * rf + coefficients[1]* gf + coefficients[2]* bf;
+    let cb = (bf - y) / (2.0*(1.0 - coefficients[2]));
+    let cr = (rf - y) / (2.0*(1.0 - coefficients[0]));
+
+    let y_int  = (y * max_value).round() as u16;
+    let cb_int = ((cb + 0.5)*max_value).round() as u16;
+    let cr_int = ((cr + 0.5)*max_value).round() as u16;
+
+    [P::cast_from(y_int), P::cast_from(cb_int), P::cast_from(cr_int)]
+}
+
+impl ColorSpace {
+    const fn transfer_characteristics(self) -> TransferCharacteristics {
+        match self {
+            ColorSpace::Srgb => TransferCharacteristics::SRGB,
+            // For Rec.2020 there are a few valid transfer functions, two are currently supported here.
+            ColorSpace::Rec2020Pq => TransferCharacteristics::SMPTE2084,
+            // Display P3 uses the sRGB transfer function
+            ColorSpace::DisplayP3 => TransferCharacteristics::SRGB,
+        }
+    }
+
+    const fn color_primaries(self) -> ColorPrimaries {
+        match self {
+            ColorSpace::Srgb => ColorPrimaries::BT709,
+            ColorSpace::Rec2020Pq => ColorPrimaries::BT2020,
+            ColorSpace::DisplayP3 => ColorPrimaries::SMPTE432
+        }
+    }
+
+    const fn matrix_coefficients(self, color_model: ColorModel) ->  MatrixCoefficients {
+        match color_model{
+            ColorModel::YCbCr => match self {
+                ColorSpace::Srgb => MatrixCoefficients::BT709,
+                ColorSpace::Rec2020Pq => MatrixCoefficients::BT2020NCL,
+                // Since there's no matrix for Display P3 implemented, the one of BT709 is used.
+                // Although this isn't perfectly accurate, it should be acceptable as long as the decoder uses the same approach.
+                ColorSpace::DisplayP3 => MatrixCoefficients::BT709,
+            },
+            ColorModel::RGB => MatrixCoefficients::Identity,
+        }
+    }
+}
 
 /// For [`Encoder::with_internal_color_model`]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -38,13 +131,25 @@ pub enum AlphaColorMode {
     Premultiplied,
 }
 
+/// The 8-bit mode only exists as a historical curiosity caused by lack of interoperability with old Safari versions.
+/// There's no other reason to use it. 8 bits internally isn't precise enough for a complex codec like AV1, and 10 bits always compresses much better (even if the input and output are 8-bit sRGB).
+/// The workaround for Safari is no longer needed, and the 8-bit encoding is planned to be deleted in a few months when usage of the oldest Safari versions becomes negligible.
+/// https://github.com/kornelski/cavif-rs/pull/94#discussion_r1883073823
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum BitDepth {
-    #[default]
     Eight,
+    #[default]
     Ten,
-    /// Pick 8 or 10 depending on image format and decoder compatibility
-    Auto,
+}
+
+impl BitDepth {
+    /// Returns the bit depth in usize, this can currently be either `8` or `10`.
+    fn to_usize(self) -> usize {
+        match self {
+            BitDepth::Eight => 8,
+            BitDepth::Ten => 10,
+        }
+    }
 }
 
 /// The newly-created image file + extra info FYI
@@ -72,6 +177,8 @@ pub struct Encoder {
     premultiplied_alpha: bool,
     /// Which pixel format to use in AVIF file. RGB tends to give larger files.
     color_model: ColorModel,
+    /// Which color space is processed and stored in the AVIF file.
+    color_space: ColorSpace,
     /// How many threads should be used (0 = match core count), None - use global rayon thread pool
     threads: Option<usize>,
     /// [`AlphaColorMode`]
@@ -84,7 +191,8 @@ pub struct Encoder {
 impl Encoder {
     /// Start here
     #[must_use]
-    pub fn new() -> Self {
+    // Assumptions about color spaces shouldn't be made since it can't reliably be deduced automatically.
+    pub fn new(color_space: ColorSpace) -> Self {
         Self {
             quantizer: quality_to_quantizer(80.),
             alpha_quantizer: quality_to_quantizer(80.),
@@ -94,6 +202,7 @@ impl Encoder {
             color_model: ColorModel::YCbCr,
             threads: None,
             alpha_color_mode: AlphaColorMode::UnassociatedClean,
+            color_space,
         }
     }
 
@@ -110,11 +219,12 @@ impl Encoder {
     #[doc(hidden)]
     #[deprecated(note = "Renamed to with_bit_depth")]
     pub fn with_depth(self, depth: Option<u8>) -> Self {
-        self.with_bit_depth(depth.map(|d| if d >= 10 { BitDepth::Ten } else { BitDepth::Eight }).unwrap_or(BitDepth::Auto))
+        self.with_bit_depth(depth.map(|d| if d >= 10 { BitDepth::Ten } else { BitDepth::Eight }).unwrap_or(BitDepth::Ten))
     }
 
-    /// Depth 8 or 10.
+    /// Depth 8 or 10-bit, default is 10-bit, even when 8 bit input data is provided.
     #[inline(always)]
+    #[track_caller]
     #[must_use]
     pub fn with_bit_depth(mut self, depth: BitDepth) -> Self {
         self.depth = depth;
@@ -154,7 +264,6 @@ impl Encoder {
     }
 
     #[doc(hidden)]
-    #[deprecated = "Renamed to `with_internal_color_model()`"]
     pub fn with_internal_color_space(self, color_model: ColorModel) -> Self {
         self.with_internal_color_model(color_model)
     }
@@ -199,66 +308,43 @@ impl Encoder {
     ///
     /// If all pixels are opaque, the alpha channel will be left out automatically.
     ///
-    /// This function takes 8-bit inputs, but will generate an AVIF file using 10-bit depth.
-    ///
     /// returns AVIF file with info about sizes about AV1 payload.
-    pub fn encode_rgba(&self, in_buffer: Img<&[rgb::RGBA<u8>]>) -> Result<EncodedImage, Error> {
+    pub fn encode_rgba<P: Pixel + Default>(&self, in_buffer: Img<&[Rgba<P>]>) -> Result<EncodedImage, Error> {
         let new_alpha = self.convert_alpha(in_buffer);
-        let buffer = new_alpha.as_ref().map(|b| b.as_ref()).unwrap_or(in_buffer);
-        let use_alpha = buffer.pixels().any(|px| px.a != 255);
+        let buffer = new_alpha.as_ref().map(|b: &Img<Vec<Rgba<P>>>| b.as_ref()).unwrap_or(in_buffer);
+        let use_alpha = buffer.pixels().any(|px| px.a != P::cast_from(255));
         if !use_alpha {
             return self.encode_rgb_internal(buffer.width(), buffer.height(), buffer.pixels().map(|px| px.rgb()));
         }
 
         let width = buffer.width();
         let height = buffer.height();
-        let matrix_coefficients = match self.color_model {
-            ColorModel::YCbCr => MatrixCoefficients::BT601,
-            ColorModel::RGB => MatrixCoefficients::Identity,
-        };
-        match self.depth {
-            BitDepth::Eight | BitDepth::Auto => {
-                let planes = buffer.pixels().map(|px| {
-                    let (y, u, v) = match self.color_model {
-                        ColorModel::YCbCr => rgb_to_8_bit_ycbcr(px.rgb(), BT601),
-                        ColorModel::RGB => rgb_to_8_bit_gbr(px.rgb()),
-                    };
-                    [y, u, v]
-                });
-                let alpha = buffer.pixels().map(|px| px.a);
-                self.encode_raw_planes_8_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
-            },
-            BitDepth::Ten => {
-                let planes = buffer.pixels().map(|px| {
-                    let (y, u, v) = match self.color_model {
-                        ColorModel::YCbCr => rgb_to_10_bit_ycbcr(px.rgb(), BT601),
-                        ColorModel::RGB => rgb_to_10_bit_gbr(px.rgb()),
-                    };
-                    [y, u, v]
-                });
-                let alpha = buffer.pixels().map(|px| to_ten(px.a));
-                self.encode_raw_planes_10_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
-            },
-        }
+        let mc = self.color_space.matrix_coefficients(self.color_model);
+        let planes = buffer.pixels().map(|px| match self.color_model {
+            ColorModel::YCbCr => apply_matrix_transformations(mc, self.depth, px.rgb()),
+            ColorModel::RGB => [px.g, px.b, px.r],
+        });
+        let alpha = buffer.pixels().map(|px| px.a);
+        self.encode_raw_planes(width, height, planes, Some(alpha), PixelRange::Full)
     }
 
-    fn convert_alpha(&self, in_buffer: Img<&[RGBA8]>) -> Option<ImgVec<RGBA8>> {
+    fn convert_alpha<P: Pixel + Default>(&self, in_buffer: Img<&[Rgba<P>]>) -> Option<ImgVec<Rgba<P>>> {
+        let max_value = (1 << self.depth.to_usize()) -1;
         match self.alpha_color_mode {
             AlphaColorMode::UnassociatedDirty => None,
             AlphaColorMode::UnassociatedClean => blurred_dirty_alpha(in_buffer),
             AlphaColorMode::Premultiplied => {
-                let prem = in_buffer.pixels()
-                    .filter(|px| px.a != 255)
+                let prem = in_buffer
+                    .pixels()
+                    .filter(|px| px.a != P::cast_from(max_value))
                     .map(|px| {
-                        if px.a == 0 {
-                            RGBA8::default()
+                        if Into::<u32>::into(px.a) == 0 {
+                            Rgba::new(px.a, px.a, px.a, px.a)
                         } else {
-                            RGBA8::new(
-                                (u16::from(px.r) * 255 / u16::from(px.a)) as u8,
-                                (u16::from(px.g) * 255 / u16::from(px.a)) as u8,
-                                (u16::from(px.b) * 255 / u16::from(px.a)) as u8,
-                                px.a,
-                            )
+                            let r = px.r * P::cast_from(max_value) / px.a;
+                            let g = px.g * P::cast_from(max_value) / px.a;
+                            let b = px.b * P::cast_from(max_value) / px.a;
+                            Rgba::new(r, g, b, px.a)
                         }
                     })
                     .collect();
@@ -284,83 +370,45 @@ impl Encoder {
     ///
     /// returns AVIF file, size of color metadata
     #[inline]
-    pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
+    pub fn encode_rgb<P: Pixel + Default>(&self, buffer: Img<&[Rgb<P>]>) -> Result<EncodedImage, Error> {
         self.encode_rgb_internal(buffer.width(), buffer.height(), buffer.pixels())
     }
 
-    fn encode_rgb_internal(&self, width: usize, height: usize, pixels: impl Iterator<Item = RGB8> + Send + Sync) -> Result<EncodedImage, Error> {
-        let matrix_coefficients = match self.color_model {
-            ColorModel::YCbCr => MatrixCoefficients::BT601,
-            ColorModel::RGB => MatrixCoefficients::Identity,
-        };
+    fn encode_rgb_internal<P: Pixel + Default>(
+        &self, width: usize, height: usize, pixels: impl Iterator<Item = Rgb<P>> + Send + Sync,
+    ) -> Result<EncodedImage, Error> {
+        let is_eight_bit = std::mem::size_of::<P>() == 1;
 
-        match self.depth {
-            BitDepth::Eight => {
-                let planes = pixels.map(|px| {
-                    let (y, u, v) = match self.color_model {
-                        ColorModel::YCbCr => rgb_to_8_bit_ycbcr(px, BT601),
-                        ColorModel::RGB => rgb_to_8_bit_gbr(px),
-                    };
-                    [y, u, v]
-                });
-                self.encode_raw_planes_8_bit(width, height, planes, None::<[_; 0]>, PixelRange::Full, matrix_coefficients)
-            },
-            BitDepth::Ten | BitDepth::Auto => {
-                let planes = pixels.map(|px| {
-                    let (y, u, v) = match self.color_model {
-                        ColorModel::YCbCr => rgb_to_10_bit_ycbcr(px, BT601),
-                        ColorModel::RGB => rgb_to_10_bit_gbr(px),
-                    };
-                    [y, u, v]
-                });
-                self.encode_raw_planes_10_bit(width, height, planes, None::<[_; 0]>, PixelRange::Full, matrix_coefficients)
-            },
+        // First convert from RGB to GBR or YCbCr
+        let mc = self.color_space.matrix_coefficients(self.color_model);
+        let planes = pixels.map(|px| match self.color_model {
+            ColorModel::YCbCr => apply_matrix_transformations(mc, self.depth, px),
+            ColorModel::RGB => [px.g, px.b, px.r],
+        });
+
+        // Then convert the bit depth when needed.
+        if self.depth != BitDepth::Eight && is_eight_bit {
+            let planes_u16 = planes.map(|px| [to_ten(px[0]), to_ten(px[1]), to_ten(px[2])]);
+            self.encode_raw_planes(width, height, planes_u16, None::<[_; 0]>, PixelRange::Full)
+        } else {
+            self.encode_raw_planes(width, height, planes, None::<[_; 0]>, PixelRange::Full)
         }
     }
 
     /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
     /// with sRGB transfer characteristics and color primaries.
     ///
-    /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
-    /// If there's no alpha, use `None::<[_; 0]>`.
-    ///
-    /// returns AVIF file, size of color metadata, size of alpha metadata overhead
-    #[inline]
-    pub fn encode_raw_planes_8_bit(
-        &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u8; 3]> + Send, alpha: Option<impl IntoIterator<Item = u8> + Send>,
-        color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
-    ) -> Result<EncodedImage, Error> {
-        self.encode_raw_planes(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 8)
-    }
-
-    /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
-    /// with sRGB transfer characteristics and color primaries.
-    ///
-    /// The pixels are 10-bit (values `0.=1023`).
+    /// If pixels are 10-bit values range from `0.=1023`.
     ///
     /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
     /// If there's no alpha, use `None::<[_; 0]>`.
     ///
     /// returns AVIF file, size of color metadata, size of alpha metadata overhead
-    #[inline]
-    pub fn encode_raw_planes_10_bit(
-        &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u16; 3]> + Send, alpha: Option<impl IntoIterator<Item = u16> + Send>,
-        color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
-    ) -> Result<EncodedImage, Error> {
-        self.encode_raw_planes(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 10)
-    }
-
     #[inline(never)]
-    fn encode_raw_planes<P: rav1e::Pixel + Default>(
+    fn encode_raw_planes<P: Pixel + Default>(
         &self, width: usize, height: usize, planes: impl IntoIterator<Item = [P; 3]> + Send, alpha: Option<impl IntoIterator<Item = P> + Send>,
-        color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients, bit_depth: u8,
+        color_pixel_range: PixelRange,
     ) -> Result<EncodedImage, Error> {
-        let color_description = Some(ColorDescription {
-            transfer_characteristics: TransferCharacteristics::SRGB,
-            color_primaries: ColorPrimaries::BT709, // sRGB-compatible
-            matrix_coefficients,
-        });
-
         let threads = self.threads.map(|threads| {
             if threads > 0 { threads } else { rayon::current_num_threads() }
         });
@@ -370,13 +418,14 @@ impl Encoder {
                 &Av1EncodeConfig {
                     width,
                     height,
-                    bit_depth: bit_depth.into(),
+                    bit_depth: self.depth.to_usize(),
                     quantizer: self.quantizer.into(),
                     speed: SpeedTweaks::from_my_preset(self.speed, self.quantizer),
                     threads,
                     pixel_range: color_pixel_range,
                     chroma_sampling: ChromaSampling::Cs444,
-                    color_description,
+                    color_space: self.color_space,
+                    color_model: self.color_model,
                 },
                 move |frame| init_frame_3(width, height, planes, frame),
             )
@@ -387,13 +436,14 @@ impl Encoder {
                     &Av1EncodeConfig {
                         width,
                         height,
-                        bit_depth: bit_depth.into(),
+                        bit_depth: self.depth.to_usize(),
                         quantizer: self.alpha_quantizer.into(),
                         speed: SpeedTweaks::from_my_preset(self.speed, self.alpha_quantizer),
                         threads,
                         pixel_range: PixelRange::Full,
                         chroma_sampling: ChromaSampling::Cs400,
-                        color_description: None,
+                        color_space: self.color_space,
+                        color_model: self.color_model,
                     },
                     |frame| init_frame_1(width, height, alpha, frame),
                 )
@@ -406,18 +456,9 @@ impl Encoder {
         let (color, alpha) = (color?, alpha.transpose()?);
 
         let avif_file = avif_serialize::Aviffy::new()
-            .matrix_coefficients(match matrix_coefficients {
-                MatrixCoefficients::Identity => avif_serialize::constants::MatrixCoefficients::Rgb,
-                MatrixCoefficients::BT709 => avif_serialize::constants::MatrixCoefficients::Bt709,
-                MatrixCoefficients::Unspecified => avif_serialize::constants::MatrixCoefficients::Unspecified,
-                MatrixCoefficients::BT601 => avif_serialize::constants::MatrixCoefficients::Bt601,
-                MatrixCoefficients::YCgCo => avif_serialize::constants::MatrixCoefficients::Ycgco,
-                MatrixCoefficients::BT2020NCL => avif_serialize::constants::MatrixCoefficients::Bt2020Ncl,
-                MatrixCoefficients::BT2020CL => avif_serialize::constants::MatrixCoefficients::Bt2020Cl,
-                _ => return Err(Error::Unsupported("matrix coefficients")),
-            })
+            .matrix_coefficients(to_avif_serialize(self.color_space.matrix_coefficients(self.color_model)))
             .premultiplied_alpha(self.premultiplied_alpha)
-            .to_vec(&color, alpha.as_deref(), width as u32, height as u32, bit_depth);
+            .to_vec(&color, alpha.as_deref(), width as u32, height as u32, self.depth.to_usize() as u8);
         let color_byte_size = color.len();
         let alpha_byte_size = alpha.as_ref().map_or(0, |a| a.len());
 
@@ -428,44 +469,8 @@ impl Encoder {
 }
 
 #[inline(always)]
-fn to_ten(x: u8) -> u16 {
-    (u16::from(x) << 2) | (u16::from(x) >> 6)
-}
-
-#[inline(always)]
-fn rgb_to_10_bit_gbr(px: rgb::RGB<u8>) -> (u16, u16, u16) {
-    (to_ten(px.g), to_ten(px.b), to_ten(px.r))
-}
-
-#[inline(always)]
-fn rgb_to_8_bit_gbr(px: rgb::RGB<u8>) -> (u8, u8, u8) {
-    (px.g, px.b, px.r)
-}
-
-// const REC709: [f32; 3] = [0.2126, 0.7152, 0.0722];
-const BT601: [f32; 3] = [0.2990, 0.5870, 0.1140];
-
-#[inline(always)]
-fn rgb_to_ycbcr(px: rgb::RGB<u8>, depth: u8, matrix: [f32; 3]) -> (f32, f32, f32) {
-    let max_value = ((1 << depth) - 1) as f32;
-    let scale = max_value / 255.;
-    let shift = (max_value * 0.5).round();
-    let y = scale * matrix[0] * f32::from(px.r) + scale * matrix[1] * f32::from(px.g) + scale * matrix[2] * f32::from(px.b);
-    let cb = (f32::from(px.b) * scale - y).mul_add(0.5 / (1. - matrix[2]), shift);
-    let cr = (f32::from(px.r) * scale - y).mul_add(0.5 / (1. - matrix[0]), shift);
-    (y.round(), cb.round(), cr.round())
-}
-
-#[inline(always)]
-fn rgb_to_10_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u16, u16, u16) {
-    let (y, u, v) = rgb_to_ycbcr(px, 10, matrix);
-    (y as u16, u as u16, v as u16)
-}
-
-#[inline(always)]
-fn rgb_to_8_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u8, u8, u8) {
-    let (y, u, v) = rgb_to_ycbcr(px, 8, matrix);
-    (y as u8, u as u8, v as u8)
+fn to_ten<P: Pixel + Default>(x: P) -> u16 {
+    (u16::cast_from(x) << 2) | (u16::cast_from(x) >> 6)
 }
 
 fn quality_to_quantizer(quality: f32) -> u8 {
@@ -601,7 +606,8 @@ struct Av1EncodeConfig {
     pub threads: Option<usize>,
     pub pixel_range: PixelRange,
     pub chroma_sampling: ChromaSampling,
-    pub color_description: Option<ColorDescription>,
+    pub color_space: ColorSpace,
+    pub color_model: ColorModel,
 }
 
 fn rav1e_config(p: &Av1EncodeConfig) -> Config {
@@ -611,6 +617,14 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
         let threads = p.threads.unwrap_or_else(rayon::current_num_threads);
         threads.min((p.width * p.height) / (p.speed.min_tile_size as usize).pow(2))
     };
+
+    let color_description = ColorDescription{
+        color_primaries: p.color_space.color_primaries(),
+        transfer_characteristics: p.color_space.transfer_characteristics(),
+        matrix_coefficients: p.color_space.matrix_coefficients(p.color_model),
+    };
+
+
     let speed_settings = p.speed.speed_settings();
     let cfg = Config::new()
         .with_encoder_config(EncoderConfig {
@@ -622,7 +636,7 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
         chroma_sampling: p.chroma_sampling,
         chroma_sample_position: ChromaSamplePosition::Unknown,
         pixel_range: p.pixel_range,
-        color_description: p.color_description,
+        color_description: Some(color_description),
         mastering_display: None,
         content_light: None,
         enable_timing_info: false,
@@ -652,9 +666,7 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
     }
 }
 
-fn init_frame_3<P: rav1e::Pixel + Default>(
-    width: usize, height: usize, planes: impl IntoIterator<Item = [P; 3]> + Send, frame: &mut Frame<P>,
-) -> Result<(), Error> {
+fn init_frame_3<P: Pixel + Default>(width: usize, height: usize, planes: impl IntoIterator<Item = [P; 3]> + Send, frame: &mut Frame<P>) -> Result<(), Error> {
     let mut f = frame.planes.iter_mut();
     let mut planes = planes.into_iter();
 
@@ -677,7 +689,7 @@ fn init_frame_3<P: rav1e::Pixel + Default>(
     Ok(())
 }
 
-fn init_frame_1<P: rav1e::Pixel + Default>(width: usize, height: usize, planes: impl IntoIterator<Item = P> + Send, frame: &mut Frame<P>) -> Result<(), Error> {
+fn init_frame_1<P: Pixel + Default>(width: usize, height: usize, planes: impl IntoIterator<Item = P> + Send, frame: &mut Frame<P>) -> Result<(), Error> {
     let mut y = frame.planes[0].mut_slice(Default::default());
     let mut planes = planes.into_iter();
 
@@ -691,7 +703,7 @@ fn init_frame_1<P: rav1e::Pixel + Default>(width: usize, height: usize, planes: 
 }
 
 #[inline(never)]
-fn encode_to_av1<P: rav1e::Pixel>(p: &Av1EncodeConfig, init: impl FnOnce(&mut Frame<P>) -> Result<(), Error>) -> Result<Vec<u8>, Error> {
+fn encode_to_av1<P: Pixel>(p: &Av1EncodeConfig, init: impl FnOnce(&mut Frame<P>) -> Result<(), Error>) -> Result<Vec<u8>, Error> {
     let mut ctx: Context<P> = rav1e_config(p).new_context()?;
     let mut frame = ctx.new_frame();
 
