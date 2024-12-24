@@ -45,7 +45,7 @@ fn parse_color_space(s: &str) -> Result<ColorSpace, String> {
     match s.to_lowercase().as_str() {
         "srgb" => Ok(ColorSpace::Srgb),
         "displayp3" => Ok(ColorSpace::DisplayP3),
-        "rec2020Pq" => Ok(ColorSpace::Rec2020Pq),
+        "rec2020pq" => Ok(ColorSpace::Rec2020Pq),
         _ => Err(format!("invalid color-space: {}", s)),
     }
 }
@@ -58,10 +58,10 @@ fn run() -> Result<(), BoxError> {
         .arg(Arg::new("color-space")
             .short('C')
             .long("color-space")
-            .value_name("sRGB/displayP3/rec2020Pq")
+            .value_name("srgb/displayp3/rec2020pq")
             .value_parser(parse_color_space)
             .required(true)
-            .help("The color space passed values are in [possible values: sRGB, displayP3, rec2020Pq] "))
+            .help("The color space passed values are in [possible values: srgb, displayp3, rec2020pq]"))
         .arg(Arg::new("quality")
             .short('Q')
             .long("quality")

@@ -1,4 +1,5 @@
 #![allow(deprecated)]
+
 use crate::dirtyalpha::blurred_dirty_alpha;
 use crate::error::Error;
 #[cfg(not(feature = "threading"))]
@@ -18,56 +19,66 @@ pub enum ColorSpace {
 fn to_avif_serialize(coefficients: MatrixCoefficients) -> avif_serialize::constants::MatrixCoefficients {
     match coefficients {
         MatrixCoefficients::Identity => avif_serialize::constants::MatrixCoefficients::Rgb,
-        MatrixCoefficients::BT709 =>  avif_serialize::constants::MatrixCoefficients::Bt709,
-        MatrixCoefficients::BT601 =>  avif_serialize::constants::MatrixCoefficients::Bt601,
-        MatrixCoefficients::YCgCo =>  avif_serialize::constants::MatrixCoefficients::Ycgco,
-        MatrixCoefficients::BT2020NCL =>  avif_serialize::constants::MatrixCoefficients::Bt2020Ncl,
-        MatrixCoefficients::BT2020CL =>  avif_serialize::constants::MatrixCoefficients::Bt2020Cl,
+        MatrixCoefficients::BT709 => avif_serialize::constants::MatrixCoefficients::Bt709,
+        MatrixCoefficients::BT601 => avif_serialize::constants::MatrixCoefficients::Bt601,
+        MatrixCoefficients::YCgCo => avif_serialize::constants::MatrixCoefficients::Ycgco,
+        MatrixCoefficients::BT2020NCL => avif_serialize::constants::MatrixCoefficients::Bt2020Ncl,
+        MatrixCoefficients::BT2020CL => avif_serialize::constants::MatrixCoefficients::Bt2020Cl,
         _ => avif_serialize::constants::MatrixCoefficients::Unspecified,
     }
 }
 
+// From ITU-T H.273, Table 4 + Equations 45 to 47
+#[inline]
+fn enum_to_values(matrix_coefficients: MatrixCoefficients) -> [f32; 3] {
+    let r_g = match matrix_coefficients {
+        MatrixCoefficients::Identity => [0.0; 2],
+        MatrixCoefficients::BT709 => [0.2126, 0.0722],
+        MatrixCoefficients::BT470BG => [0.3, 0.11],
+        MatrixCoefficients::BT601 => [0.299, 0.114],
+        MatrixCoefficients::SMPTE240 => [ 0.212,  0.087 ],
+        MatrixCoefficients::BT2020NCL => [ 0.2627, 0.0593 ],
+        MatrixCoefficients::Unspecified => unreachable!("This is unspecified."),
+        MatrixCoefficients::FCC => unimplemented!("For future use by ITU-T | ISO/IEC"),
+        _ => unimplemented!(),
+    };
+
+    [r_g[0], 1.0 - r_g[0] - r_g[1], r_g[1]]
+}
+
+/// Converts RGB to YCbCr based on MatrixCoefficients. Doesn't apply any transformation when [`MatrixCoefficients::Unspecified`] is set.
+fn apply_matrix_transformations<P: Pixel>(coefficients: MatrixCoefficients, bit_depth: BitDepth, px: Rgb<P>) -> [P; 3] {
+    let depth = bit_depth.to_usize();
+    let max_value = ((1 << depth) - 1) as f32;
+    let coefficients = enum_to_values(coefficients);
+
+    let rf = (u32::cast_from(px.r) as f32) / max_value;
+    let gf = (u32::cast_from(px.g) as f32) / max_value;
+    let bf = (u32::cast_from(px.b) as f32) / max_value;
+
+    let y = coefficients[0] * rf + coefficients[1]* gf + coefficients[2]* bf;
+    let cb = (bf - y) / (2.0*(1.0 - coefficients[2]));
+    let cr = (rf - y) / (2.0*(1.0 - coefficients[0]));
+
+    let y_int  = (y * max_value).round() as u16;
+    let cb_int = ((cb + 0.5)*max_value).round() as u16;
+    let cr_int = ((cr + 0.5)*max_value).round() as u16;
+
+    [P::cast_from(y_int), P::cast_from(cb_int), P::cast_from(cr_int)]
+}
+
 impl ColorSpace {
-    fn rgb_to_ycbcr<P: Pixel + Default>(self, bit_depth: BitDepth, px: Rgb<P>) -> [P;3] {
-        let depth = bit_depth.to_usize();
-        let max_value = ((1 << depth) - 1) as f32;
-        let rf = (u32::cast_from(px.r) as f32) / max_value;
-        let gf = (u32::cast_from(px.g) as f32) / max_value;
-        let bf = (u32::cast_from(px.b) as f32) / max_value;
-
-        let rgb_to_luma = match self {
-            ColorSpace::Srgb =>
-                [0.2126, 0.7152, 0.0722]
-            ,
-            ColorSpace::Rec2020Pq =>
-                [0.2627, 0.6780, 0.0593]
-            ,
-            ColorSpace::DisplayP3 =>
-                [0.22900385, 0.69172686, 0.07926947]
-            ,
-        };
-
-        let y = rgb_to_luma[0] * rf + rgb_to_luma[1]* gf + rgb_to_luma[2]* bf;
-        let cb = (bf - y) / (2.0*(1.0 - rgb_to_luma[2]));
-        let cr = (rf - y) / (2.0*(1.0 - rgb_to_luma[0]));
-
-        let y_int  = (y * max_value).round() as u16;
-        let cb_int = ((cb + 0.5)*max_value).round() as u16;
-        let cr_int = ((cr + 0.5)*max_value).round() as u16;
-
-        [P::cast_from(y_int), P::cast_from(cb_int), P::cast_from(cr_int)]
+    const fn transfer_characteristics(self) -> TransferCharacteristics {
+        match self {
+            ColorSpace::Srgb => TransferCharacteristics::SRGB,
+            // For Rec.2020 there are a few valid transfer functions, two are currently supported here.
+            ColorSpace::Rec2020Pq => TransferCharacteristics::SMPTE2084,
+            // Display P3 uses the sRGB transfer function
+            ColorSpace::DisplayP3 => TransferCharacteristics::SRGB,
+        }
     }
 
-    fn transfer_characteristics(self) -> TransferCharacteristics {
-            match self {
-                ColorSpace::Srgb => TransferCharacteristics::SRGB,
-                // For Rec.2020 there are a few valid transfer functions, two are currently supported here.
-                ColorSpace::Rec2020Pq => TransferCharacteristics::SMPTE2084,
-                // Display P3 uses the sRGB transfer function
-                ColorSpace::DisplayP3 => TransferCharacteristics::SRGB,
-            }
-        }
-    fn color_primaries(self) -> ColorPrimaries {
+    const fn color_primaries(self) -> ColorPrimaries {
         match self {
             ColorSpace::Srgb => ColorPrimaries::BT709,
             ColorSpace::Rec2020Pq => ColorPrimaries::BT2020,
@@ -75,7 +86,7 @@ impl ColorSpace {
         }
     }
 
-    fn matrix_coefficients(self, color_model: ColorModel) ->  MatrixCoefficients {
+    const fn matrix_coefficients(self, color_model: ColorModel) ->  MatrixCoefficients {
         match color_model{
             ColorModel::YCbCr => match self {
                 ColorSpace::Srgb => MatrixCoefficients::BT709,
@@ -85,26 +96,6 @@ impl ColorSpace {
                 ColorSpace::DisplayP3 => MatrixCoefficients::BT709,
             },
             ColorModel::RGB => MatrixCoefficients::Identity,
-        }
-    }
-
-    fn primaries(self) -> [ChromaticityPoint;3]{
-        match self {
-            ColorSpace::Srgb => {
-                [ChromaticityPoint{x: (0.640 * ((1 << 16) as f64)).round() as u16, y: (0.330 * ((1 << 16) as f64)).round() as u16},
-                ChromaticityPoint{x: (0.300 * ((1 << 16) as f64)).round() as u16, y: (0.600* ((1 << 16) as f64)).round() as u16},
-                ChromaticityPoint{x: (0.150 * ((1 << 16) as f64)).round() as u16, y: (0.060* ((1 << 16) as f64)).round() as u16}]
-            }
-            ColorSpace::DisplayP3 => {
-                [ChromaticityPoint{x: (0.680 * ((1 << 16) as f64)).round() as u16, y: (0.320 * ((1 << 16) as f64)).round() as u16},
-                ChromaticityPoint{x:  (0.265 * ((1 << 16) as f64)).round() as u16, y: (0.690 * ((1 << 16) as f64)).round() as u16},
-                ChromaticityPoint{x:  (0.150 * ((1 << 16) as f64)).round() as u16, y: (0.060 * ((1 << 16) as f64)).round() as u16}]
-            }
-            ColorSpace::Rec2020Pq => {
-                [ChromaticityPoint{x: (0.708 * ((1 << 16) as f64)).round() as u16, y: (0.292 * ((1 << 16) as f64)).round() as u16},
-                ChromaticityPoint{x:  (0.170 * ((1 << 16) as f64)).round() as u16, y: (0.797 * ((1 << 16) as f64)).round() as u16},
-                ChromaticityPoint{x:  (0.131 * ((1 << 16) as f64)).round() as u16, y: (0.046 * ((1 << 16) as f64)).round() as u16}]
-            }
         }
     }
 }
@@ -328,8 +319,9 @@ impl Encoder {
 
         let width = buffer.width();
         let height = buffer.height();
+        let mc = self.color_space.matrix_coefficients(self.color_model);
         let planes = buffer.pixels().map(|px| match self.color_model {
-            ColorModel::YCbCr => self.color_space.rgb_to_ycbcr(self.depth,px.rgb()),
+            ColorModel::YCbCr => apply_matrix_transformations(mc, self.depth, px.rgb()),
             ColorModel::RGB => [px.g, px.b, px.r],
         });
         let alpha = buffer.pixels().map(|px| px.a);
@@ -388,8 +380,9 @@ impl Encoder {
         let is_eight_bit = std::mem::size_of::<P>() == 1;
 
         // First convert from RGB to GBR or YCbCr
+        let mc = self.color_space.matrix_coefficients(self.color_model);
         let planes = pixels.map(|px| match self.color_model {
-            ColorModel::YCbCr => self.color_space.rgb_to_ycbcr(self.depth, px),
+            ColorModel::YCbCr => apply_matrix_transformations(mc, self.depth, px),
             ColorModel::RGB => [px.g, px.b, px.r],
         });
 
