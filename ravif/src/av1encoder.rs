@@ -77,7 +77,7 @@ pub struct Encoder {
     /// [`AlphaColorMode`]
     alpha_color_mode: AlphaColorMode,
     /// 8 or 10
-    depth: BitDepth,
+    output_depth: BitDepth,
 }
 
 /// Builder methods
@@ -89,7 +89,7 @@ impl Encoder {
             quantizer: quality_to_quantizer(80.),
             alpha_quantizer: quality_to_quantizer(80.),
             speed: 5,
-            depth: BitDepth::default(),
+            output_depth: BitDepth::default(),
             premultiplied_alpha: false,
             color_model: ColorModel::YCbCr,
             threads: None,
@@ -121,7 +121,7 @@ impl Encoder {
     #[inline(always)]
     #[must_use]
     pub fn with_bit_depth(mut self, depth: BitDepth) -> Self {
-        self.depth = depth;
+        self.output_depth = depth;
         self
     }
 
@@ -225,7 +225,7 @@ impl Encoder {
             ColorModel::YCbCr => MatrixCoefficients::BT601,
             ColorModel::RGB => MatrixCoefficients::Identity,
         };
-        match self.depth {
+        match self.output_depth {
             BitDepth::Eight | BitDepth::Auto => {
                 let planes = buffer.pixels().map(|px| {
                     let (y, u, v) = match self.color_model {
@@ -303,7 +303,7 @@ impl Encoder {
             ColorModel::RGB => MatrixCoefficients::Identity,
         };
 
-        match self.depth {
+        match self.output_depth {
             BitDepth::Eight => {
                 let planes = pixels.map(|px| {
                     let (y, u, v) = match self.color_model {
@@ -333,6 +333,12 @@ impl Encoder {
     /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
     /// If there's no alpha, use `None::<[_; 0]>`.
     ///
+    /// `color_pixel_range` should be `PixelRange::Full` to avoid worsening already small 8-bit dynamic range.
+    /// Support for limited range may be removed in the future.
+    ///
+    /// If `AlphaColorMode::Premultiplied` has been set, the alpha pixels must be premultiplied.
+    /// `AlphaColorMode::UnassociatedClean` has no effect in this function, and is equivalent to `AlphaColorMode::UnassociatedDirty`.
+    ///
     /// returns AVIF file, size of color metadata, size of alpha metadata overhead
     #[inline]
     pub fn encode_raw_planes_8_bit(
@@ -350,6 +356,11 @@ impl Encoder {
     /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
     /// If there's no alpha, use `None::<[_; 0]>`.
     ///
+    /// `color_pixel_range` should be `PixelRange::Full`. Support for limited range may be removed in the future.
+    ///
+    /// If `AlphaColorMode::Premultiplied` has been set, the alpha pixels must be premultiplied.
+    /// `AlphaColorMode::UnassociatedClean` has no effect in this function, and is equivalent to `AlphaColorMode::UnassociatedDirty`.
+    ///
     /// returns AVIF file, size of color metadata, size of alpha metadata overhead
     #[inline]
     pub fn encode_raw_planes_10_bit(
@@ -362,7 +373,7 @@ impl Encoder {
     #[inline(never)]
     fn encode_raw_planes_internal<P: rav1e::Pixel + Default>(
         &self, width: usize, height: usize, planes: impl IntoIterator<Item = [P; 3]> + Send, alpha: Option<impl IntoIterator<Item = P> + Send>,
-        color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients, bit_depth: u8,
+        color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients, input_pixels_bit_depth: u8,
     ) -> Result<EncodedImage, Error> {
         let color_description = Some(ColorDescription {
             transfer_characteristics: TransferCharacteristics::SRGB,
@@ -379,7 +390,7 @@ impl Encoder {
                 &Av1EncodeConfig {
                     width,
                     height,
-                    bit_depth: bit_depth.into(),
+                    bit_depth: input_pixels_bit_depth.into(),
                     quantizer: self.quantizer.into(),
                     speed: SpeedTweaks::from_my_preset(self.speed, self.quantizer),
                     threads,
@@ -396,7 +407,7 @@ impl Encoder {
                     &Av1EncodeConfig {
                         width,
                         height,
-                        bit_depth: bit_depth.into(),
+                        bit_depth: input_pixels_bit_depth.into(),
                         quantizer: self.alpha_quantizer.into(),
                         speed: SpeedTweaks::from_my_preset(self.speed, self.alpha_quantizer),
                         threads,
@@ -426,7 +437,7 @@ impl Encoder {
                 _ => return Err(Error::Unsupported("matrix coefficients")),
             })
             .premultiplied_alpha(self.premultiplied_alpha)
-            .to_vec(&color, alpha.as_deref(), width as u32, height as u32, bit_depth);
+            .to_vec(&color, alpha.as_deref(), width as u32, height as u32, input_pixels_bit_depth);
         let color_byte_size = color.len();
         let alpha_byte_size = alpha.as_ref().map_or(0, |a| a.len());
 
