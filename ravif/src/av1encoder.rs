@@ -113,7 +113,11 @@ impl Encoder {
         self.with_bit_depth(depth.map(|d| if d >= 10 { BitDepth::Ten } else { BitDepth::Eight }).unwrap_or(BitDepth::Auto))
     }
 
-    /// Depth 8 or 10.
+    /// Internal precision to use in the encoded AV1 data, for both color and alpha. 10-bit depth works best, even for 8-bit inputs/outputs.
+    ///
+    /// Use 8-bit depth only as a workaround for decoders that need it.
+    ///
+    /// This setting does not affect pixel inputs for this library.
     #[inline(always)]
     #[must_use]
     pub fn with_bit_depth(mut self, depth: BitDepth) -> Self {
@@ -131,8 +135,10 @@ impl Encoder {
         self
     }
 
-    /// `1..=10`. 1 = very very slow, but max compression.
-    /// 10 = quick, but larger file sizes and lower quality.
+    /// * 1 = very very slow, but max compression.
+    /// * 10 = quick, but larger file sizes and lower quality.
+    ///
+    /// Panics if outside `1..=10`.
     #[inline(always)]
     #[track_caller]
     #[must_use]
@@ -171,6 +177,9 @@ impl Encoder {
     }
 
     /// Configure handling of color channels in transparent images
+    ///
+    /// Note that this doesn't affect input format for this library,
+    /// which for RGBA is always uncorrelated alpha.
     #[inline(always)]
     #[must_use]
     pub fn with_alpha_color_mode(mut self, mode: AlphaColorMode) -> Self {
@@ -190,7 +199,7 @@ impl Encoder {
     /// Img::new(&pixels_rgba[..], width, height)
     /// ```
     ///
-    /// If you have pixels as `u8` slice, then first do:
+    /// If you have pixels as `u8` slice, then use the `rgb` crate, and do:
     ///
     /// ```rust,ignore
     /// use rgb::ComponentSlice;
@@ -203,11 +212,11 @@ impl Encoder {
     ///
     /// returns AVIF file with info about sizes about AV1 payload.
     pub fn encode_rgba(&self, in_buffer: Img<&[rgb::RGBA<u8>]>) -> Result<EncodedImage, Error> {
-        let new_alpha = self.convert_alpha(in_buffer);
+        let new_alpha = self.convert_alpha_8bit(in_buffer);
         let buffer = new_alpha.as_ref().map(|b| b.as_ref()).unwrap_or(in_buffer);
         let use_alpha = buffer.pixels().any(|px| px.a != 255);
         if !use_alpha {
-            return self.encode_rgb_internal(buffer.width(), buffer.height(), buffer.pixels().map(|px| px.rgb()));
+            return self.encode_rgb_internal_from_8bit(buffer.width(), buffer.height(), buffer.pixels().map(|px| px.rgb()));
         }
 
         let width = buffer.width();
@@ -242,7 +251,7 @@ impl Encoder {
         }
     }
 
-    fn convert_alpha(&self, in_buffer: Img<&[RGBA8]>) -> Option<ImgVec<RGBA8>> {
+    fn convert_alpha_8bit(&self, in_buffer: Img<&[RGBA8]>) -> Option<ImgVec<RGBA8>> {
         match self.alpha_color_mode {
             AlphaColorMode::UnassociatedDirty => None,
             AlphaColorMode::UnassociatedClean => blurred_dirty_alpha(in_buffer),
@@ -285,10 +294,10 @@ impl Encoder {
     /// returns AVIF file, size of color metadata
     #[inline]
     pub fn encode_rgb(&self, buffer: Img<&[RGB8]>) -> Result<EncodedImage, Error> {
-        self.encode_rgb_internal(buffer.width(), buffer.height(), buffer.pixels())
+        self.encode_rgb_internal_from_8bit(buffer.width(), buffer.height(), buffer.pixels())
     }
 
-    fn encode_rgb_internal(&self, width: usize, height: usize, pixels: impl Iterator<Item = RGB8> + Send + Sync) -> Result<EncodedImage, Error> {
+    fn encode_rgb_internal_from_8bit(&self, width: usize, height: usize, pixels: impl Iterator<Item = RGB8> + Send + Sync) -> Result<EncodedImage, Error> {
         let matrix_coefficients = match self.color_model {
             ColorModel::YCbCr => MatrixCoefficients::BT601,
             ColorModel::RGB => MatrixCoefficients::Identity,
@@ -330,7 +339,7 @@ impl Encoder {
         &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u8; 3]> + Send, alpha: Option<impl IntoIterator<Item = u8> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
     ) -> Result<EncodedImage, Error> {
-        self.encode_raw_planes(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 8)
+        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 8)
     }
 
     /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
@@ -347,11 +356,11 @@ impl Encoder {
         &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u16; 3]> + Send, alpha: Option<impl IntoIterator<Item = u16> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
     ) -> Result<EncodedImage, Error> {
-        self.encode_raw_planes(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 10)
+        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 10)
     }
 
     #[inline(never)]
-    fn encode_raw_planes<P: rav1e::Pixel + Default>(
+    fn encode_raw_planes_internal<P: rav1e::Pixel + Default>(
         &self, width: usize, height: usize, planes: impl IntoIterator<Item = [P; 3]> + Send, alpha: Option<impl IntoIterator<Item = P> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients, bit_depth: u8,
     ) -> Result<EncodedImage, Error> {
