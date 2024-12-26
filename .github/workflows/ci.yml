@@ -1,0 +1,17 @@
+name: Rust
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: ilammy/setup-nasm@v1
+    - name: Tests
+      run: cargo test --verbose --all --all-targets
+    - name: Check semver
+      uses: obi1kenobi/cargo-semver-checks-action@v2
+      with:
+        package: ravif
