@@ -40,10 +40,10 @@ pub enum AlphaColorMode {
 
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum BitDepth {
-    #[default]
     Eight,
     Ten,
     /// Pick 8 or 10 depending on image format and decoder compatibility
+    #[default]
     Auto,
 }
 
