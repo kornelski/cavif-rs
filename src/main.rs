@@ -46,73 +46,84 @@ fn run() -> Result<(), BoxError> {
         .version(clap::crate_version!())
         .author("Kornel Lesiński <kornel@imageoptim.com>")
         .about("Convert JPEG/PNG images to AVIF image format (based on AV1/rav1e)")
-        .arg(Arg::new("quality")
-            .short('Q')
-            .long("quality")
-            .value_name("n")
-            .value_parser(parse_quality)
-            .default_value("80")
-            .help("Quality from 1 (worst) to 100 (best)"))
-        .arg(Arg::new("speed")
-            .short('s')
-            .long("speed")
-            .value_name("n")
-            .default_value("4")
-            .value_parser(parse_speed)
-            .help("Encoding speed from 1 (best) to 10 (fast but ugly)"))
-        .arg(Arg::new("threads")
-            .short('j')
-            .long("threads")
-            .value_name("n")
-            .default_value("0")
-            .value_parser(value_parser!(u8))
-            .help("Maximum threads to use (0 = one thread per host core)"))
-        .arg(Arg::new("overwrite")
-            .alias("force")
-            .short('f')
-            .long("overwrite")
-            .action(ArgAction::SetTrue)
-            .num_args(0)
-            .help("Replace files if there's .avif already"))
-        .arg(Arg::new("output")
-            .short('o')
-            .long("output")
-            .value_parser(value_parser!(PathBuf))
-            .value_name("path")
-            .help("Write output to this path instead of same_file.avif. It may be a file or a directory."))
-        .arg(Arg::new("quiet")
-            .short('q')
-            .long("quiet")
-            .action(ArgAction::SetTrue)
-            .num_args(0)
-            .help("Don't print anything"))
-        .arg(Arg::new("dirty-alpha")
-            .long("dirty-alpha")
-            .action(ArgAction::SetTrue)
-            .num_args(0)
-            .help("Keep RGB data of fully-transparent pixels (makes larger, lower quality files)"))
-        .arg(Arg::new("color")
-            .long("color")
-            .default_value("ycbcr")
-            .value_parser(["ycbcr", "rgb"])
-            .help("Internal AVIF color model. YCbCr works better for human eyes."))
-        .arg(Arg::new("depth")
-            .long("depth")
-            .default_value("auto")
-            .value_parser(["8", "10", "auto"])
-            .help("Write 8-bit (more compatible) or 10-bit (better quality) images"))
-        .arg(Arg::new("IMAGES")
-            .index(1)
-            .num_args(1..)
-            .value_parser(value_parser!(PathBuf))
-            .help("One or more JPEG or PNG files to convert. \"-\" is interpreted as stdin/stdout."))
+        .arg(
+            Arg::new("quality")
+                .short('Q')
+                .long("quality")
+                .value_name("n")
+                .value_parser(parse_quality)
+                .default_value("80")
+                .help("Quality from 1 (worst) to 100 (best)"),
+        )
+        .arg(
+            Arg::new("speed")
+                .short('s')
+                .long("speed")
+                .value_name("n")
+                .default_value("4")
+                .value_parser(parse_speed)
+                .help("Encoding speed from 1 (best) to 10 (fast but ugly)"),
+        )
+        .arg(
+            Arg::new("threads")
+                .short('j')
+                .long("threads")
+                .value_name("n")
+                .default_value("0")
+                .value_parser(value_parser!(u8))
+                .help("Maximum threads to use (0 = one thread per host core)"),
+        )
+        .arg(
+            Arg::new("overwrite")
+                .alias("force")
+                .short('f')
+                .long("overwrite")
+                .action(ArgAction::SetTrue)
+                .num_args(0)
+                .help("Replace files if there's .avif already"),
+        )
+        .arg(
+            Arg::new("output")
+                .short('o')
+                .long("output")
+                .value_parser(value_parser!(PathBuf))
+                .value_name("path")
+                .help("Write output to this path instead of same_file.avif. It may be a file or a directory."),
+        )
+        .arg(Arg::new("quiet").short('q').long("quiet").action(ArgAction::SetTrue).num_args(0).help("Don't print anything"))
+        .arg(
+            Arg::new("dirty-alpha")
+                .long("dirty-alpha")
+                .action(ArgAction::SetTrue)
+                .num_args(0)
+                .help("Keep RGB data of fully-transparent pixels (makes larger, lower quality files)"),
+        )
+        .arg(
+            Arg::new("color")
+                .long("color")
+                .default_value("ycbcr")
+                .value_parser(["ycbcr", "rgb"])
+                .help("Internal AVIF color model. YCbCr works better for human eyes."),
+        )
+        .arg(
+            Arg::new("depth")
+                .long("depth")
+                .default_value("auto")
+                .value_parser(["8", "10", "auto"])
+                .help("Write 8-bit (more compatible) or 10-bit (better quality) images"),
+        )
+        .arg(
+            Arg::new("IMAGES")
+                .index(1)
+                .num_args(1..)
+                .value_parser(value_parser!(PathBuf))
+                .help("One or more JPEG or PNG files to convert. \"-\" is interpreted as stdin/stdout."),
+        )
         .get_matches();
 
-    let output = args.get_one::<PathBuf>("output").map(|s| {
-        match s {
-            s if s.as_os_str() == "-" => MaybePath::Stdio,
-            s => MaybePath::Path(PathBuf::from(s)),
-        }
+    let output = args.get_one::<PathBuf>("output").map(|s| match s {
+        s if s.as_os_str() == "-" => MaybePath::Stdio,
+        s => MaybePath::Path(PathBuf::from(s)),
     });
     let quality = *args.get_one::<f32>("quality").expect("default");
     let alpha_quality = ((quality + 100.) / 2.).min(quality + quality / 4. + 2.);
@@ -143,25 +154,23 @@ fn run() -> Result<(), BoxError> {
                     eprintln!("warning: -q is not for quality, so '{s}' is misinterpreted as a file. Use -Q {s}");
                 }
             }
-            path.extension().map_or(true, |e| if e == "avif" {
-                if !quiet {
-                    if path.exists() {
-                        eprintln!("warning: ignoring {}, because it's already an AVIF", path.display());
-                    } else {
-                        eprintln!("warning: Did you mean to use -o {p}?", p = path.display());
-                        return true;
+            path.extension().map_or(true, |e| {
+                if e == "avif" {
+                    if !quiet {
+                        if path.exists() {
+                            eprintln!("warning: ignoring {}, because it's already an AVIF", path.display());
+                        } else {
+                            eprintln!("warning: Did you mean to use -o {p}?", p = path.display());
+                            return true;
+                        }
                     }
+                    false
+                } else {
+                    true
                 }
-                false
-            } else {
-                true
             })
         })
-        .map(|p| if p.as_os_str() == "-" {
-            MaybePath::Stdio
-        } else {
-            MaybePath::Path(PathBuf::from(p))
-        })
+        .map(|p| if p.as_os_str() == "-" { MaybePath::Stdio } else { MaybePath::Path(PathBuf::from(p)) })
         .collect();
 
     if files.is_empty() {
@@ -190,8 +199,7 @@ fn run() -> Result<(), BoxError> {
                     output.clone()
                 }
             }),
-            (None, MaybePath::Stdio) |
-            (Some(MaybePath::Stdio), _) => MaybePath::Stdio,
+            (None, MaybePath::Stdio) | (Some(MaybePath::Stdio), _) => MaybePath::Stdio,
             (Some(MaybePath::Path(output)), MaybePath::Stdio) => MaybePath::Path(output.clone()),
         };
         match out_path {
@@ -208,11 +216,21 @@ fn run() -> Result<(), BoxError> {
             .with_internal_color_model(color_model)
             .with_alpha_color_mode(if dirty_alpha { AlphaColorMode::UnassociatedDirty } else { AlphaColorMode::UnassociatedClean })
             .with_num_threads(threads.filter(|&n| n > 0).map(usize::from));
-        let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc.encode_rgba(img.as_ref())?;
+        let EncodedImage {
+            avif_file,
+            color_byte_size,
+            alpha_byte_size,
+            ..
+        } = enc.encode_rgba(img.as_ref())?;
         match out_path {
             MaybePath::Path(ref p) => {
                 if !quiet {
-                    println!("{}: {}KB ({color_byte_size}B color, {alpha_byte_size}B alpha, {}B HEIF)", p.display(), (avif_file.len()+999)/1000, avif_file.len() - color_byte_size - alpha_byte_size);
+                    println!(
+                        "{}: {}KB ({color_byte_size}B color, {alpha_byte_size}B alpha, {}B HEIF)",
+                        p.display(),
+                        (avif_file.len() + 999) / 1000,
+                        avif_file.len() - color_byte_size - alpha_byte_size
+                    );
                 }
                 fs::write(p, avif_file)
             },
@@ -222,7 +240,9 @@ fn run() -> Result<(), BoxError> {
         Ok(())
     };
 
-    let failures = files.into_par_iter().map(|path| {
+    let failures = files
+        .into_par_iter()
+        .map(|path| {
             let tmp;
             let (data, path_str): (_, &dyn std::fmt::Display) = match path {
                 MaybePath::Stdio => {
@@ -262,10 +282,38 @@ fn load_rgba(data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, Bo
         load_image::export::imgref::ImgVecKind::RGBA8(img) => img,
         load_image::export::imgref::ImgVecKind::RGB16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8).with_alpha(255)).collect()),
         load_image::export::imgref::ImgVecKind::RGBA16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8)).collect()),
-        load_image::export::imgref::ImgVecKind::GRAY8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.0; RGBA8::new(c,c,c,255) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAY16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.0>>8) as u8; RGBA8::new(c,c,c,255) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAYA8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.0; RGBA8::new(c,c,c,g.1) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAYA16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.0>>8) as u8; RGBA8::new(c,c,c,(g.1>>8) as u8) }).collect()),
+        load_image::export::imgref::ImgVecKind::GRAY8(img) => img.map_buf(|buf| {
+            buf.into_iter()
+                .map(|g| {
+                    let c = g.0;
+                    RGBA8::new(c, c, c, 255)
+                })
+                .collect()
+        }),
+        load_image::export::imgref::ImgVecKind::GRAY16(img) => img.map_buf(|buf| {
+            buf.into_iter()
+                .map(|g| {
+                    let c = (g.0 >> 8) as u8;
+                    RGBA8::new(c, c, c, 255)
+                })
+                .collect()
+        }),
+        load_image::export::imgref::ImgVecKind::GRAYA8(img) => img.map_buf(|buf| {
+            buf.into_iter()
+                .map(|g| {
+                    let c = g.0;
+                    RGBA8::new(c, c, c, g.1)
+                })
+                .collect()
+        }),
+        load_image::export::imgref::ImgVecKind::GRAYA16(img) => img.map_buf(|buf| {
+            buf.into_iter()
+                .map(|g| {
+                    let c = (g.0 >> 8) as u8;
+                    RGBA8::new(c, c, c, (g.1 >> 8) as u8)
+                })
+                .collect()
+        }),
     };
 
     if premultiplied_alpha {
