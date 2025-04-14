@@ -257,9 +257,8 @@ impl Encoder {
             AlphaColorMode::UnassociatedClean => blurred_dirty_alpha(in_buffer),
             AlphaColorMode::Premultiplied => {
                 let prem = in_buffer.pixels()
-                    .filter(|px| px.a != 255)
                     .map(|px| {
-                        if px.a == 0 {
+                        if px.a == 0 || px.a == 255 {
                             RGBA8::default()
                         } else {
                             RGBA8::new(
