@@ -344,7 +344,7 @@ impl Encoder {
         &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u8; 3]> + Send, alpha: Option<impl IntoIterator<Item = u8> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
     ) -> Result<EncodedImage, Error> {
-        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 8)
+        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, TransferCharacteristics::SRGB, ColorPrimaries::BT709, matrix_coefficients, 8)
     }
 
     /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
@@ -366,17 +366,39 @@ impl Encoder {
         &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u16; 3]> + Send, alpha: Option<impl IntoIterator<Item = u16> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
     ) -> Result<EncodedImage, Error> {
-        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 10)
+        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, TransferCharacteristics::SRGB, ColorPrimaries::BT709, matrix_coefficients, 10)
+    }
+
+    /// Encodes AVIF from 3 planar channels that are in the color space described by `transfer_characteristics`,
+    /// `color_primaries` and `matrix_coefficients`.
+    ///
+    /// The pixels are 10-bit (values `0.=1023`).
+    ///
+    /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
+    /// If there's no alpha, use `None::<[_; 0]>`.
+    ///
+    /// `color_pixel_range` should be `PixelRange::Full`. Support for limited range may be removed in the future.
+    ///
+    /// If `AlphaColorMode::Premultiplied` has been set, the alpha pixels must be premultiplied.
+    /// `AlphaColorMode::UnassociatedClean` has no effect in this function, and is equivalent to `AlphaColorMode::UnassociatedDirty`.
+    ///
+    /// returns AVIF file, size of color metadata, size of alpha metadata overhead
+    #[inline]
+    pub fn encode_raw_plane_10_with_params(
+        &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u16; 3]> + Send, alpha: Option<impl IntoIterator<Item = u16> + Send>,
+        color_pixel_range: PixelRange, transfer_characteristics: TransferCharacteristics, color_primaries: ColorPrimaries, matrix_coefficients: MatrixCoefficients,
+    ) -> Result<EncodedImage, Error> {
+        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, transfer_characteristics, color_primaries, matrix_coefficients, 10)
     }
 
     #[inline(never)]
     fn encode_raw_planes_internal<P: rav1e::Pixel + Default>(
         &self, width: usize, height: usize, planes: impl IntoIterator<Item = [P; 3]> + Send, alpha: Option<impl IntoIterator<Item = P> + Send>,
-        color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients, input_pixels_bit_depth: u8,
+        color_pixel_range: PixelRange, transfer_characteristics: TransferCharacteristics, color_primaries: ColorPrimaries, matrix_coefficients: MatrixCoefficients, input_pixels_bit_depth: u8,
     ) -> Result<EncodedImage, Error> {
         let color_description = Some(ColorDescription {
-            transfer_characteristics: TransferCharacteristics::SRGB,
-            color_primaries: ColorPrimaries::BT709, // sRGB-compatible
+            transfer_characteristics,
+            color_primaries,
             matrix_coefficients,
         });
 
@@ -425,6 +447,23 @@ impl Encoder {
         let (color, alpha) = (color?, alpha.transpose()?);
 
         let avif_file = avif_serialize::Aviffy::new()
+            .transfer_characteristics(match transfer_characteristics {
+                TransferCharacteristics::BT709 => avif_serialize::constants::TransferCharacteristics::Bt709,
+                TransferCharacteristics::Unspecified => avif_serialize::constants::TransferCharacteristics::Unspecified,
+                TransferCharacteristics::BT601 => avif_serialize::constants::TransferCharacteristics::Bt601,
+                TransferCharacteristics::SRGB => avif_serialize::constants::TransferCharacteristics::Srgb,
+                TransferCharacteristics::BT2020_10Bit => avif_serialize::constants::TransferCharacteristics::Bt2020_10,
+                TransferCharacteristics::BT2020_12Bit => avif_serialize::constants::TransferCharacteristics::Bt2020_12,
+                TransferCharacteristics::SMPTE2084 => avif_serialize::constants::TransferCharacteristics::Smpte2084,
+                _ => return Err(Error::Unsupported("transfer characteristics")),
+            })
+            .color_primaries(match color_primaries {
+                ColorPrimaries::BT709 => avif_serialize::constants::ColorPrimaries::Bt709,
+                ColorPrimaries::Unspecified => avif_serialize::constants::ColorPrimaries::Unspecified,
+                ColorPrimaries::BT601 => avif_serialize::constants::ColorPrimaries::Bt601,
+                ColorPrimaries::BT2020 => avif_serialize::constants::ColorPrimaries::Bt2020,
+                _ => return Err(Error::Unsupported("color primaries")),
+            })
             .matrix_coefficients(match matrix_coefficients {
                 MatrixCoefficients::Identity => avif_serialize::constants::MatrixCoefficients::Rgb,
                 MatrixCoefficients::BT709 => avif_serialize::constants::MatrixCoefficients::Bt709,
