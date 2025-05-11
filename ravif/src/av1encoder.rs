@@ -344,9 +344,7 @@ impl Encoder {
         &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u8; 3]> + Send, alpha: Option<impl IntoIterator<Item = u8> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
     ) -> Result<EncodedImage, Error> {
-        const TRANSFER_CHARACTERISTICS: TransferCharacteristics = TransferCharacteristics::SRGB;
-        const COLOR_PRIMARIES: ColorPrimaries = ColorPrimaries::BT709; // sRGB-compatible
-        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, TRANSFER_CHARACTERISTICS, COLOR_PRIMARIES, matrix_coefficients, 8)
+        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, TransferCharacteristics::SRGB, ColorPrimaries::BT709, matrix_coefficients, 8)
     }
 
     /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
@@ -368,9 +366,7 @@ impl Encoder {
         &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u16; 3]> + Send, alpha: Option<impl IntoIterator<Item = u16> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
     ) -> Result<EncodedImage, Error> {
-        const TRANSFER_CHARACTERISTICS: TransferCharacteristics = TransferCharacteristics::SRGB;
-        const COLOR_PRIMARIES: ColorPrimaries = ColorPrimaries::BT709; // sRGB-compatible
-        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, TRANSFER_CHARACTERISTICS, COLOR_PRIMARIES, matrix_coefficients, 10)
+        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, TransferCharacteristics::SRGB, ColorPrimaries::BT709, matrix_coefficients, 10)
     }
 
     /// Encodes AVIF from 3 planar channels that are in the color space described by `transfer_characteristics`,
