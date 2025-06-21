@@ -50,7 +50,7 @@ fn bleed_opaque_color(img: ImgRef<RGBA8>, bg: RGBA8) -> Img<Vec<RGBA8>> {
         } else {
             let (weights, sum) = chain(&top, &mid, &bot)
                 .map(|c| weighed_pixel(*c))
-                .fold((0u32, RGB::new(0,0,0)), |mut sum, item| {
+                .fold((0u32, RGB::new(0, 0, 0)), |mut sum, item| {
                     sum.0 += u32::from(item.0);
                     sum.1 += item.1;
                     sum

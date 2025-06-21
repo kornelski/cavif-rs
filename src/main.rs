@@ -108,11 +108,9 @@ fn run() -> Result<(), BoxError> {
             .help("One or more JPEG or PNG files to convert. \"-\" is interpreted as stdin/stdout."))
         .get_matches();
 
-    let output = args.get_one::<PathBuf>("output").map(|s| {
-        match s {
-            s if s.as_os_str() == "-" => MaybePath::Stdio,
-            s => MaybePath::Path(PathBuf::from(s)),
-        }
+    let output = args.get_one::<PathBuf>("output").map(|s| match s {
+        s if s.as_os_str() == "-" => MaybePath::Stdio,
+        s => MaybePath::Path(PathBuf::from(s)),
     });
     let quality = *args.get_one::<f32>("quality").expect("default");
     let alpha_quality = ((quality + 100.) / 2.).min(quality + quality / 4. + 2.);
@@ -143,7 +141,7 @@ fn run() -> Result<(), BoxError> {
                     eprintln!("warning: -q is not for quality, so '{s}' is misinterpreted as a file. Use -Q {s}");
                 }
             }
-            path.extension().map_or(true, |e| if e == "avif" {
+            path.extension().is_none_or(|e| if e == "avif" {
                 if !quiet {
                     if path.exists() {
                         eprintln!("warning: ignoring {}, because it's already an AVIF", path.display());
@@ -212,7 +210,7 @@ fn run() -> Result<(), BoxError> {
         match out_path {
             MaybePath::Path(ref p) => {
                 if !quiet {
-                    println!("{}: {}KB ({color_byte_size}B color, {alpha_byte_size}B alpha, {}B HEIF)", p.display(), (avif_file.len()+999)/1000, avif_file.len() - color_byte_size - alpha_byte_size);
+                    println!("{}: {}KB ({color_byte_size}B color, {alpha_byte_size}B alpha, {}B HEIF)", p.display(), avif_file.len().div_ceil(1000), avif_file.len() - color_byte_size - alpha_byte_size);
                 }
                 fs::write(p, avif_file)
             },
@@ -236,7 +234,8 @@ fn run() -> Result<(), BoxError> {
                     (data, &tmp)
                 },
             };
-            process(data, &path).map_err(|e| BoxError::from(format!("{path_str}: error: {e}")))
+            process(data, &path)
+                .map_err(|e| BoxError::from(format!("{path_str}: error: {e}")))
         })
         .filter_map(|res| res.err())
         .collect::<Vec<BoxError>>();

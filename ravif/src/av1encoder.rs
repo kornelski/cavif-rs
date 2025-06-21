@@ -109,6 +109,7 @@ impl Encoder {
 
     #[doc(hidden)]
     #[deprecated(note = "Renamed to with_bit_depth")]
+    #[must_use]
     pub fn with_depth(self, depth: Option<u8>) -> Self {
         self.with_bit_depth(depth.map(|d| if d >= 10 { BitDepth::Ten } else { BitDepth::Eight }).unwrap_or(BitDepth::Auto))
     }
@@ -161,6 +162,7 @@ impl Encoder {
 
     #[doc(hidden)]
     #[deprecated = "Renamed to `with_internal_color_model()`"]
+    #[must_use]
     pub fn with_internal_color_space(self, color_model: ColorModel) -> Self {
         self.with_internal_color_model(color_model)
     }
@@ -171,7 +173,7 @@ impl Encoder {
     #[track_caller]
     #[must_use]
     pub fn with_num_threads(mut self, num_threads: Option<usize>) -> Self {
-        assert!(num_threads.map_or(true, |n| n > 0));
+        assert!(num_threads.is_none_or(|n| n > 0));
         self.threads = num_threads;
         self
     }
@@ -341,7 +343,9 @@ impl Encoder {
     /// returns AVIF file, size of color metadata, size of alpha metadata overhead
     #[inline]
     pub fn encode_raw_planes_8_bit(
-        &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u8; 3]> + Send, alpha: Option<impl IntoIterator<Item = u8> + Send>,
+        &self, width: usize, height: usize,
+        planes: impl IntoIterator<Item = [u8; 3]> + Send,
+        alpha: Option<impl IntoIterator<Item = u8> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
     ) -> Result<EncodedImage, Error> {
         self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 8)
@@ -363,7 +367,9 @@ impl Encoder {
     /// returns AVIF file, size of color metadata, size of alpha metadata overhead
     #[inline]
     pub fn encode_raw_planes_10_bit(
-        &self, width: usize, height: usize, planes: impl IntoIterator<Item = [u16; 3]> + Send, alpha: Option<impl IntoIterator<Item = u16> + Send>,
+        &self, width: usize, height: usize,
+        planes: impl IntoIterator<Item = [u16; 3]> + Send,
+        alpha: Option<impl IntoIterator<Item = u16> + Send>,
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
     ) -> Result<EncodedImage, Error> {
         self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 10)
@@ -371,8 +377,11 @@ impl Encoder {
 
     #[inline(never)]
     fn encode_raw_planes_internal<P: rav1e::Pixel + Default>(
-        &self, width: usize, height: usize, planes: impl IntoIterator<Item = [P; 3]> + Send, alpha: Option<impl IntoIterator<Item = P> + Send>,
-        color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients, input_pixels_bit_depth: u8,
+        &self, width: usize, height: usize,
+        planes: impl IntoIterator<Item = [P; 3]> + Send,
+        alpha: Option<impl IntoIterator<Item = P> + Send>,
+        color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
+        input_pixels_bit_depth: u8,
     ) -> Result<EncodedImage, Error> {
         let color_description = Some(ColorDescription {
             transfer_characteristics: TransferCharacteristics::SRGB,
@@ -469,9 +478,9 @@ fn rgb_to_ycbcr(px: rgb::RGB<u8>, depth: u8, matrix: [f32; 3]) -> (f32, f32, f32
     let max_value = ((1 << depth) - 1) as f32;
     let scale = max_value / 255.;
     let shift = (max_value * 0.5).round();
-    let y = scale * matrix[0] * f32::from(px.r) + scale * matrix[1] * f32::from(px.g) + scale * matrix[2] * f32::from(px.b);
-    let cb = (f32::from(px.b) * scale - y).mul_add(0.5 / (1. - matrix[2]), shift);
-    let cr = (f32::from(px.r) * scale - y).mul_add(0.5 / (1. - matrix[0]), shift);
+    let y = (scale * matrix[2]).mul_add(f32::from(px.b), (scale * matrix[0]).mul_add(f32::from(px.r), scale * matrix[1] * f32::from(px.g)));
+    let cb = f32::from(px.b).mul_add(scale, -y).mul_add(0.5 / (1. - matrix[2]), shift);
+    let cr = f32::from(px.r).mul_add(scale, -y).mul_add(0.5 / (1. - matrix[0]), shift);
     (y.round(), cb.round(), cr.round())
 }
 
@@ -489,7 +498,7 @@ fn rgb_to_8_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u8, u8, u8) {
 
 fn quality_to_quantizer(quality: f32) -> u8 {
     let q = quality / 100.;
-    let x = if q >= 0.85 { (1. - q) * 3. } else if q > 0.25 { 1. - 0.125 - q * 0.5 } else { 1. - q };
+    let x = if q >= 0.85 { (1. - q) * 3. } else if q > 0.25 { q.mul_add(-0.5, 1. - 0.125) } else { 1. - q };
     (x * 255.).round() as u8
 }
 
@@ -586,10 +595,10 @@ impl SpeedTweaks {
         if let Some(v) = self.cdef { speed_settings.cdef = v; }
         if let Some(v) = self.lrf { speed_settings.lrf = v; }
         if let Some(v) = self.inter_tx_split { speed_settings.transform.enable_inter_tx_split = v; }
-        if let Some(v) = self.sgr_complexity_full { speed_settings.sgr_complexity = if v { SGRComplexityLevel::Full } else { SGRComplexityLevel::Reduced } };
+        if let Some(v) = self.sgr_complexity_full { speed_settings.sgr_complexity = if v { SGRComplexityLevel::Full } else { SGRComplexityLevel::Reduced } }
         if let Some(v) = self.use_satd_subpel { speed_settings.motion.use_satd_subpel = v; }
         if let Some(v) = self.fine_directional_intra { speed_settings.prediction.fine_directional_intra = v; }
-        if let Some(v) = self.complex_prediction_modes { speed_settings.prediction.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple} };
+        if let Some(v) = self.complex_prediction_modes { speed_settings.prediction.prediction_modes = if v { PredictionModesSetting::ComplexAll } else { PredictionModesSetting::Simple} }
         if let Some((min, max)) = self.partition_range {
             debug_assert!(min <= max);
             fn sz(s: u8) -> BlockSize {
@@ -727,8 +736,7 @@ fn encode_to_av1<P: rav1e::Pixel>(p: &Av1EncodeConfig, init: impl FnOnce(&mut Fr
                 },
                 _ => continue,
             },
-            Err(EncoderStatus::Encoded) |
-            Err(EncoderStatus::LimitReached) => break,
+            Err(EncoderStatus::Encoded | EncoderStatus::LimitReached) => break,
             Err(err) => Err(err)?,
         }
     }
