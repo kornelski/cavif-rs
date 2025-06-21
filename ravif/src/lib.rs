@@ -41,13 +41,14 @@ mod rayoff {
 }
 
 #[test]
-fn encode8_with_alpha_auto() {
+fn encode8_with_alpha() {
     let img = imgref::ImgVec::new((0..200).flat_map(|y| (0..256).map(move |x| {
         RGBA8::new(x as u8, y as u8, 255, (x + y) as u8)
     })).collect(), 256, 200);
 
     let enc = Encoder::new()
         .with_quality(22.0)
+        .with_bit_depth(BitDepth::Eight)
         .with_speed(1)
         .with_alpha_quality(22.0)
         .with_alpha_color_mode(AlphaColorMode::UnassociatedDirty)

@@ -42,7 +42,7 @@ pub enum AlphaColorMode {
 pub enum BitDepth {
     Eight,
     Ten,
-    /// Pick 8 or 10 depending on image format and decoder compatibility
+    /// Same as `Ten`
     #[default]
     Auto,
 }
@@ -226,7 +226,7 @@ impl Encoder {
             ColorModel::RGB => MatrixCoefficients::Identity,
         };
         match self.output_depth {
-            BitDepth::Eight | BitDepth::Auto => {
+            BitDepth::Eight => {
                 let planes = buffer.pixels().map(|px| {
                     let (y, u, v) = match self.color_model {
                         ColorModel::YCbCr => rgb_to_8_bit_ycbcr(px.rgb(), BT601),
@@ -237,7 +237,7 @@ impl Encoder {
                 let alpha = buffer.pixels().map(|px| px.a);
                 self.encode_raw_planes_8_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
             },
-            BitDepth::Ten => {
+            BitDepth::Ten | BitDepth::Auto => {
                 let planes = buffer.pixels().map(|px| {
                     let (y, u, v) = match self.color_model {
                         ColorModel::YCbCr => rgb_to_10_bit_ycbcr(px.rgb(), BT601),
