@@ -229,23 +229,17 @@ impl Encoder {
         };
         match self.output_depth {
             BitDepth::Eight => {
-                let planes = buffer.pixels().map(|px| {
-                    let (y, u, v) = match self.color_model {
-                        ColorModel::YCbCr => rgb_to_8_bit_ycbcr(px.rgb(), BT601),
-                        ColorModel::RGB => rgb_to_8_bit_gbr(px.rgb()),
-                    };
-                    [y, u, v]
+                let planes = buffer.pixels().map(|px| match self.color_model {
+                    ColorModel::YCbCr => rgb_to_8_bit_ycbcr(px.rgb(), BT601).into(),
+                    ColorModel::RGB => rgb_to_8_bit_gbr(px.rgb()).into(),
                 });
                 let alpha = buffer.pixels().map(|px| px.a);
                 self.encode_raw_planes_8_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
             },
             BitDepth::Ten | BitDepth::Auto => {
-                let planes = buffer.pixels().map(|px| {
-                    let (y, u, v) = match self.color_model {
-                        ColorModel::YCbCr => rgb_to_10_bit_ycbcr(px.rgb(), BT601),
-                        ColorModel::RGB => rgb_to_10_bit_gbr(px.rgb()),
-                    };
-                    [y, u, v]
+                let planes = buffer.pixels().map(|px| match self.color_model {
+                    ColorModel::YCbCr => rgb_to_10_bit_ycbcr(px.rgb(), BT601).into(),
+                    ColorModel::RGB => rgb_to_10_bit_gbr(px.rgb()).into(),
                 });
                 let alpha = buffer.pixels().map(|px| to_ten(px.a));
                 self.encode_raw_planes_10_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
