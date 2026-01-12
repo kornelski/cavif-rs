@@ -348,7 +348,7 @@ impl Encoder {
     /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
     /// with sRGB transfer characteristics and color primaries.
     ///
-    /// The pixels are 10-bit (values `0.=1023`).
+    /// The pixels are 10-bit (values `0.=1023`) in host's native endian.
     ///
     /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
     /// If there's no alpha, use `None::<[_; 0]>`.
@@ -449,11 +449,13 @@ impl Encoder {
     }
 }
 
+/// Native endian
 #[inline(always)]
 fn to_ten(x: u8) -> u16 {
     (u16::from(x) << 2) | (u16::from(x) >> 6)
 }
 
+/// Native endian
 #[inline(always)]
 fn rgb_to_10_bit_gbr(px: rgb::RGB<u8>) -> (u16, u16, u16) {
     (to_ten(px.g), to_ten(px.b), to_ten(px.r))

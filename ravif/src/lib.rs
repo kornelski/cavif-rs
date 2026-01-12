@@ -83,7 +83,11 @@ fn encode8_opaque() {
         .with_num_threads(Some(1));
     let EncodedImage { avif_file, color_byte_size, alpha_byte_size , .. } = enc.encode_rgba(img.as_ref()).unwrap();
     assert_eq!(0, alpha_byte_size); // the image must not have alpha
-    assert!(color_byte_size > 50 && color_byte_size < 1000);
+    let tmp_path = format!("/tmp/ravif-encode-test-failure-{color_byte_size}.avif");
+    if color_byte_size <= 150 || color_byte_size >= 500 {
+        std::fs::write(&tmp_path, &avif_file).expect(&tmp_path);
+    }
+    assert!(color_byte_size > 150 && color_byte_size < 500, "size = {color_byte_size}; expected ~= 215; see {tmp_path}");
 
     let parsed1 = avif_parse::read_avif(&mut avif_file.as_slice()).unwrap();
     assert_eq!(None, parsed1.alpha_item);
