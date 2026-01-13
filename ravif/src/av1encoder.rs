@@ -494,7 +494,7 @@ fn rgb_to_8_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u8, u8, u8) {
 
 fn quality_to_quantizer(quality: f32) -> u8 {
     let q = quality / 100.;
-    let x = if q >= 0.85 { (1. - q) * 3. } else if q > 0.25 { q.mul_add(-0.5, 1. - 0.125) } else { 1. - q };
+    let x = if q >= 0.82 { (1. - q) * 2.6 } else if q > 0.25 { q.mul_add(-0.5, 1. - 0.125) } else { 1. - q };
     (x * 255.).round() as u8
 }
 
