@@ -1,4 +1,5 @@
 #![allow(deprecated)]
+use std::borrow::Cow;
 use crate::dirtyalpha::blurred_dirty_alpha;
 use crate::error::Error;
 #[cfg(not(feature = "threading"))]
@@ -60,8 +61,10 @@ pub struct EncodedImage {
 }
 
 /// Encoder config builder
+///
+/// The lifetime is relevant only for [`Encoder::with_exif()`]. Use `Encoder<'static>` if Rust complains.
 #[derive(Debug, Clone)]
-pub struct Encoder {
+pub struct Encoder<'exif_slice> {
     /// 0-255 scale
     quantizer: u8,
     /// 0-255 scale
@@ -78,10 +81,12 @@ pub struct Encoder {
     alpha_color_mode: AlphaColorMode,
     /// 8 or 10
     output_depth: BitDepth,
+    /// Dropped into MPEG infe BOX
+    exif: Option<Cow<'exif_slice, [u8]>>,
 }
 
 /// Builder methods
-impl Encoder {
+impl<'exif_slice> Encoder<'exif_slice> {
     /// Start here
     #[must_use]
     pub fn new() -> Self {
@@ -93,6 +98,7 @@ impl Encoder {
             premultiplied_alpha: false,
             color_model: ColorModel::YCbCr,
             threads: None,
+            exif: None,
             alpha_color_mode: AlphaColorMode::UnassociatedClean,
         }
     }
@@ -189,10 +195,18 @@ impl Encoder {
         self.premultiplied_alpha = mode == AlphaColorMode::Premultiplied;
         self
     }
+
+    /// Embedded into AVIF file as-is
+    ///
+    /// The data can be `Vec<u8>`, or `&[u8]` if the encoder instance doesn't leave its scope.
+    pub fn with_exif(mut self, exif_data: impl Into<Cow<'exif_slice, [u8]>>) -> Self {
+        self.exif = Some(exif_data.into());
+        self
+    }
 }
 
 /// Once done with config, call one of the `encode_*` functions
-impl Encoder {
+impl Encoder<'_> {
     /// Make a new AVIF image from RGBA pixels (non-premultiplied, alpha last)
     ///
     /// Make the `Img` for the `buffer` like this:
@@ -427,7 +441,8 @@ impl Encoder {
         let (color, alpha) = rayon::join(encode_color, encode_alpha);
         let (color, alpha) = (color?, alpha.transpose()?);
 
-        let avif_file = avif_serialize::Aviffy::new()
+        let mut serializer_config = avif_serialize::Aviffy::new();
+        serializer_config
             .matrix_coefficients(match matrix_coefficients {
                 MatrixCoefficients::Identity => avif_serialize::constants::MatrixCoefficients::Rgb,
                 MatrixCoefficients::BT709 => avif_serialize::constants::MatrixCoefficients::Bt709,
@@ -438,8 +453,11 @@ impl Encoder {
                 MatrixCoefficients::BT2020CL => avif_serialize::constants::MatrixCoefficients::Bt2020Cl,
                 _ => return Err(Error::Unsupported("matrix coefficients")),
             })
-            .premultiplied_alpha(self.premultiplied_alpha)
-            .to_vec(&color, alpha.as_deref(), width as u32, height as u32, input_pixels_bit_depth);
+            .premultiplied_alpha(self.premultiplied_alpha);
+        if let Some(exif) = &self.exif {
+            serializer_config.set_exif(exif.to_vec());
+        }
+        let avif_file = serializer_config.to_vec(&color, alpha.as_deref(), width as u32, height as u32, input_pixels_bit_depth);
         let color_byte_size = color.len();
         let alpha_byte_size = alpha.as_ref().map_or(0, |a| a.len());
 

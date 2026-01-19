@@ -20,7 +20,7 @@ pub type ColorSpace = ColorModel;
 
 pub use av1encoder::{AlphaColorMode, BitDepth, EncodedImage, Encoder};
 #[doc(inline)]
-pub use rav1e::prelude::MatrixCoefficients;
+pub use rav1e::prelude::{MatrixCoefficients, PixelRange};
 
 mod dirtyalpha;
 
