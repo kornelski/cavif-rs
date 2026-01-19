@@ -181,7 +181,7 @@ fn run() -> Result<(), BoxError> {
         drop(data);
         let out_path = match (&output, input_path) {
             (None, MaybePath::Path(input)) => MaybePath::Path(input.with_extension("avif")),
-            (Some(MaybePath::Path(output)), MaybePath::Path(ref input)) => MaybePath::Path({
+            (Some(MaybePath::Path(output)), MaybePath::Path(input)) => MaybePath::Path({
                 if use_dir {
                     output.join(Path::new(input.file_name().unwrap()).with_extension("avif"))
                 } else {
@@ -261,10 +261,10 @@ fn load_rgba(data: &[u8], premultiplied_alpha: bool) -> Result<ImgVec<RGBA8>, Bo
         load_image::export::imgref::ImgVecKind::RGBA8(img) => img,
         load_image::export::imgref::ImgVecKind::RGB16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8).with_alpha(255)).collect()),
         load_image::export::imgref::ImgVecKind::RGBA16(img) => img.map_buf(|buf| buf.into_iter().map(|px| px.map(|c| (c >> 8) as u8)).collect()),
-        load_image::export::imgref::ImgVecKind::GRAY8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.0; RGBA8::new(c,c,c,255) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAY16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.0>>8) as u8; RGBA8::new(c,c,c,255) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAYA8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.0; RGBA8::new(c,c,c,g.1) }).collect()),
-        load_image::export::imgref::ImgVecKind::GRAYA16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.0>>8) as u8; RGBA8::new(c,c,c,(g.1>>8) as u8) }).collect()),
+        load_image::export::imgref::ImgVecKind::GRAY8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.value(); RGBA8::new(c,c,c,255) }).collect()),
+        load_image::export::imgref::ImgVecKind::GRAY16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.value()>>8) as u8; RGBA8::new(c,c,c,255) }).collect()),
+        load_image::export::imgref::ImgVecKind::GRAYA8(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = g.value(); RGBA8::new(c,c,c,g.a) }).collect()),
+        load_image::export::imgref::ImgVecKind::GRAYA16(img) => img.map_buf(|buf| buf.into_iter().map(|g| { let c = (g.value()>>8) as u8; RGBA8::new(c,c,c,(g.a>>8) as u8) }).collect()),
     };
 
     if premultiplied_alpha {
