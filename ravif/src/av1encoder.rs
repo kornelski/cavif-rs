@@ -85,22 +85,28 @@ pub struct Encoder<'exif_slice> {
     exif: Option<Cow<'exif_slice, [u8]>>,
 }
 
+impl<'exif_slice> Default for Encoder<'exif_slice> {
+    fn default() -> Self {
+        Self {
+           quantizer: quality_to_quantizer(80.),
+           alpha_quantizer: quality_to_quantizer(80.),
+           speed: 5,
+           output_depth: BitDepth::default(),
+           premultiplied_alpha: false,
+           color_model: ColorModel::YCbCr,
+           threads: None,
+           exif: None,
+           alpha_color_mode: AlphaColorMode::UnassociatedClean,
+       }
+    }
+}
+
 /// Builder methods
 impl<'exif_slice> Encoder<'exif_slice> {
     /// Start here
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            quantizer: quality_to_quantizer(80.),
-            alpha_quantizer: quality_to_quantizer(80.),
-            speed: 5,
-            output_depth: BitDepth::default(),
-            premultiplied_alpha: false,
-            color_model: ColorModel::YCbCr,
-            threads: None,
-            exif: None,
-            alpha_color_mode: AlphaColorMode::UnassociatedClean,
-        }
+        Self::default()
     }
 
     /// Quality `1..=100`. Panics if out of range.
@@ -200,8 +206,15 @@ impl<'exif_slice> Encoder<'exif_slice> {
     ///
     /// The data can be `Vec<u8>`, or `&[u8]` if the encoder instance doesn't leave its scope.
     pub fn with_exif(mut self, exif_data: impl Into<Cow<'exif_slice, [u8]>>) -> Self {
-        self.exif = Some(exif_data.into());
+        self.set_exif(exif_data);
         self
+    }
+
+    /// Embedded into AVIF file as-is
+    ///
+    /// The data can be `Vec<u8>`, or `&[u8]` if the encoder instance doesn't leave its scope.
+    pub fn set_exif(&mut self, exif_data: impl Into<Cow<'exif_slice, [u8]>>) {
+        self.exif = Some(exif_data.into());
     }
 }
 
