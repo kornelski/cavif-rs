@@ -68,6 +68,7 @@ fn encode8_with_alpha() {
     assert_eq!(md.bit_depth, 8);
 }
 
+#[cfg(feature = "bit_depth_10")]
 #[test]
 fn encode8_opaque() {
     let img = imgref::ImgVec::new((0..101).flat_map(|y| (0..129).map(move |x| {

@@ -43,9 +43,25 @@ pub enum AlphaColorMode {
 pub enum BitDepth {
     Eight,
     Ten,
-    /// Same as `Ten`
+    /// Same as `Ten`, or as `Eight` when the `bit_depth_10` feature is disabled.
     #[default]
     Auto,
+}
+
+impl BitDepth {
+  fn resolve(self) -> Result<BitDepth, Error> {
+    Ok(match self {
+      #[cfg(feature = "bit_depth_10")]
+      BitDepth::Auto => BitDepth::Ten,
+      #[cfg(not(feature = "bit_depth_10"))]
+      BitDepth::Auto => BitDepth::Eight,
+      BitDepth::Eight => BitDepth::Eight,
+      #[cfg(feature = "bit_depth_10")]
+      BitDepth::Ten => BitDepth::Ten,
+      #[cfg(not(feature = "bit_depth_10"))]
+      BitDepth::Ten => return Err(Error::Unsupported("ravif was built without the `bit_depth_10` feature")),
+    })
+  }
 }
 
 /// The newly-created image file + extra info FYI
@@ -254,7 +270,8 @@ impl Encoder<'_> {
             ColorModel::YCbCr => MatrixCoefficients::BT601,
             ColorModel::RGB => MatrixCoefficients::Identity,
         };
-        match self.output_depth {
+
+        match self.output_depth.resolve()? {
             BitDepth::Eight => {
                 let planes = buffer.pixels().map(|px| match self.color_model {
                     ColorModel::YCbCr => rgb_to_8_bit_ycbcr(px.rgb(), BT601).into(),
@@ -263,7 +280,8 @@ impl Encoder<'_> {
                 let alpha = buffer.pixels().map(|px| px.a);
                 self.encode_raw_planes_8_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
             },
-            BitDepth::Ten | BitDepth::Auto => {
+            #[cfg(feature = "bit_depth_10")]
+            BitDepth::Ten => {
                 let planes = buffer.pixels().map(|px| match self.color_model {
                     ColorModel::YCbCr => rgb_to_10_bit_ycbcr(px.rgb(), BT601).into(),
                     ColorModel::RGB => rgb_to_10_bit_gbr(px.rgb()).into(),
@@ -271,6 +289,7 @@ impl Encoder<'_> {
                 let alpha = buffer.pixels().map(|px| to_ten(px.a));
                 self.encode_raw_planes_10_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
             },
+            _ => unreachable!()
         }
     }
 
@@ -325,7 +344,7 @@ impl Encoder<'_> {
             ColorModel::RGB => MatrixCoefficients::Identity,
         };
 
-        match self.output_depth {
+        match self.output_depth.resolve()? {
             BitDepth::Eight => {
                 let planes = pixels.map(|px| {
                     let (y, u, v) = match self.color_model {
@@ -336,7 +355,8 @@ impl Encoder<'_> {
                 });
                 self.encode_raw_planes_8_bit(width, height, planes, None::<[_; 0]>, PixelRange::Full, matrix_coefficients)
             },
-            BitDepth::Ten | BitDepth::Auto => {
+            #[cfg(feature = "bit_depth_10")]
+            BitDepth::Ten => {
                 let planes = pixels.map(|px| {
                     let (y, u, v) = match self.color_model {
                         ColorModel::YCbCr => rgb_to_10_bit_ycbcr(px, BT601),
@@ -346,6 +366,7 @@ impl Encoder<'_> {
                 });
                 self.encode_raw_planes_10_bit(width, height, planes, None::<[_; 0]>, PixelRange::Full, matrix_coefficients)
             },
+            _ => unreachable!()
         }
     }
 
@@ -386,6 +407,7 @@ impl Encoder<'_> {
     /// `AlphaColorMode::UnassociatedClean` has no effect in this function, and is equivalent to `AlphaColorMode::UnassociatedDirty`.
     ///
     /// returns AVIF file, size of color metadata, size of alpha metadata overhead
+    #[cfg(feature = "bit_depth_10")]
     #[inline]
     pub fn encode_raw_planes_10_bit(
         &self, width: usize, height: usize,
@@ -482,12 +504,14 @@ impl Encoder<'_> {
 
 /// Native endian
 #[inline(always)]
+#[cfg(feature = "bit_depth_10")]
 fn to_ten(x: u8) -> u16 {
     (u16::from(x) << 2) | (u16::from(x) >> 6)
 }
 
 /// Native endian
 #[inline(always)]
+#[cfg(feature = "bit_depth_10")]
 fn rgb_to_10_bit_gbr(px: rgb::RGB<u8>) -> (u16, u16, u16) {
     (to_ten(px.g), to_ten(px.b), to_ten(px.r))
 }
@@ -512,6 +536,7 @@ fn rgb_to_ycbcr(px: rgb::RGB<u8>, depth: u8, matrix: [f32; 3]) -> (f32, f32, f32
 }
 
 #[inline(always)]
+#[cfg(feature = "bit_depth_10")]
 fn rgb_to_10_bit_ycbcr(px: rgb::RGB<u8>, matrix: [f32; 3]) -> (u16, u16, u16) {
     let (y, u, v) = rgb_to_ycbcr(px, 10, matrix);
     (y as u16, u as u16, v as u16)
