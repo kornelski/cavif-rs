@@ -26,9 +26,11 @@ quick-error = "2.0.1"
 rav1e = { version = "0.8", default-features = false, features = ["wasm"] }
 
 [features]
-default = ["asm", "threading"]
+default = ["asm", "threading", "bit_depth_10"]
 asm = ["rav1e/asm"]
 threading = ["dep:rayon", "rav1e/threading"]
+# Support for encoding 10-bit AVIF. Disabling it reduces binary size by ~0.8MB.
+bit_depth_10 = []
 
 [profile.release]
 lto = true
