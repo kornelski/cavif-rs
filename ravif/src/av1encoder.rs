@@ -6,7 +6,7 @@ use crate::error::Error;
 use crate::rayoff as rayon;
 use imgref::{Img, ImgVec};
 use rav1e::prelude::*;
-use rgb::{RGB8, RGBA8};
+use rgb::{RGB16, RGB8, RGBA16, RGBA8};
 
 /// For [`Encoder::with_internal_color_model`]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -48,6 +48,86 @@ pub enum BitDepth {
     Auto,
 }
 
+/// Color signal description (ITU-T H.273 code points). For [`Encoder::with_color_description`]
+///
+/// It is written to both the AV1 sequence header and the AVIF `colr` box.
+///
+/// This library does not convert between color spaces or transfer functions.
+/// It only labels the pixels, so the pixels given to the `encode_*` functions must
+/// already use these primaries and this transfer function.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct ColorDescription {
+    /// Chromaticities of the RGB primaries and the white point
+    pub color_primaries: ColorPrimaries,
+    /// Transfer function the pixel values have been encoded with
+    pub transfer_characteristics: TransferCharacteristics,
+    /// Matrix used for the RGB to YCbCr conversion when [`ColorModel::YCbCr`] is used.
+    ///
+    /// RGB inputs can be converted with `BT709`, `BT601` and `BT2020NCL`, or stored as-is with `Identity`.
+    /// [`ColorModel::RGB`] always uses `Identity`.
+    pub matrix_coefficients: MatrixCoefficients,
+    /// Range of the stored samples. `PixelRange::Full` is recommended.
+    pub pixel_range: PixelRange,
+}
+
+impl ColorDescription {
+    /// sRGB, the default. This is what this library uses when no color description is set.
+    pub const SRGB: Self = Self {
+        color_primaries: ColorPrimaries::BT709,
+        transfer_characteristics: TransferCharacteristics::SRGB,
+        matrix_coefficients: MatrixCoefficients::BT601,
+        pixel_range: PixelRange::Full,
+    };
+
+    /// Display P3 primaries (SMPTE EG 432-1) with the sRGB transfer function
+    pub const DISPLAY_P3: Self = Self {
+        color_primaries: ColorPrimaries::SMPTE432,
+        transfer_characteristics: TransferCharacteristics::SRGB,
+        matrix_coefficients: MatrixCoefficients::BT709,
+        pixel_range: PixelRange::Full,
+    };
+
+    /// BT.2100 PQ: BT.2020 primaries with the SMPTE ST 2084 transfer function
+    pub const BT2100_PQ: Self = Self {
+        color_primaries: ColorPrimaries::BT2020,
+        transfer_characteristics: TransferCharacteristics::SMPTE2084,
+        matrix_coefficients: MatrixCoefficients::BT2020NCL,
+        pixel_range: PixelRange::Full,
+    };
+
+    /// BT.2100 HLG: BT.2020 primaries with the Hybrid Log-Gamma transfer function
+    pub const BT2100_HLG: Self = Self {
+        color_primaries: ColorPrimaries::BT2020,
+        transfer_characteristics: TransferCharacteristics::HLG,
+        matrix_coefficients: MatrixCoefficients::BT2020NCL,
+        pixel_range: PixelRange::Full,
+    };
+}
+
+/// HDR content light level information (CTA-861.3). For [`Encoder::with_content_light_level`]
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
+pub struct ContentLightLevel {
+    /// MaxCLL: light level of the brightest pixel, in cd/m^2
+    pub max_content_light_level: u16,
+    /// MaxFALL: highest frame-average light level, in cd/m^2
+    pub max_frame_average_light_level: u16,
+}
+
+/// HDR mastering display color volume (SMPTE ST 2086). For [`Encoder::with_mastering_display`]
+///
+/// Values are physical. They are converted to the fixed-point encodings of the AV1 metadata OBU and the AVIF `mdcv` box.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct MasteringDisplay {
+    /// CIE 1931 `(x, y)` chromaticities of the red, green and blue primaries, in that order
+    pub primaries: [(f32, f32); 3],
+    /// CIE 1931 `(x, y)` chromaticity of the white point
+    pub white_point: (f32, f32),
+    /// Maximum luminance of the display, in cd/m^2
+    pub max_luminance: f32,
+    /// Minimum luminance of the display, in cd/m^2
+    pub min_luminance: f32,
+}
+
 /// The newly-created image file + extra info FYI
 #[non_exhaustive]
 #[derive(Clone)]
@@ -83,6 +163,10 @@ pub struct Encoder<'exif_slice> {
     output_depth: BitDepth,
     /// Dropped into MPEG infe BOX
     exif: Option<Cow<'exif_slice, [u8]>>,
+    /// `None` is sRGB with the matrix picked by `color_model`
+    color_description: Option<ColorDescription>,
+    content_light_level: Option<ContentLightLevel>,
+    mastering_display: Option<MasteringDisplay>,
 }
 
 impl<'exif_slice> Default for Encoder<'exif_slice> {
@@ -97,6 +181,9 @@ impl<'exif_slice> Default for Encoder<'exif_slice> {
            threads: None,
            exif: None,
            alpha_color_mode: AlphaColorMode::UnassociatedClean,
+           color_description: None,
+           content_light_level: None,
+           mastering_display: None,
        }
     }
 }
@@ -216,6 +303,37 @@ impl<'exif_slice> Encoder<'exif_slice> {
     pub fn set_exif(&mut self, exif_data: impl Into<Cow<'exif_slice, [u8]>>) {
         self.exif = Some(exif_data.into());
     }
+
+    /// Color primaries, transfer function, YCbCr matrix and range of the image. The default is [`ColorDescription::SRGB`].
+    ///
+    /// The pixels are only labelled, not converted: inputs must already be in this color space and use this transfer function.
+    /// The matrix is used to convert RGB inputs to YCbCr (unless [`ColorModel::RGB`] is used).
+    /// The `encode_raw_planes_*` functions take the matrix and range from their arguments instead.
+    ///
+    /// Encoding fails with [`Error::Unsupported`] if a code point can't be stored in the AVIF `colr` box,
+    /// or if RGB inputs would need a conversion matrix other than `BT709`, `BT601`, `BT2020NCL` or `Identity`.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_color_description(mut self, color_description: ColorDescription) -> Self {
+        self.color_description = Some(color_description);
+        self
+    }
+
+    /// HDR content light level. Written to the AV1 metadata and the AVIF `clli` box.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_content_light_level(mut self, content_light_level: ContentLightLevel) -> Self {
+        self.content_light_level = Some(content_light_level);
+        self
+    }
+
+    /// HDR mastering display color volume. Written to the AV1 metadata and the AVIF `mdcv` box.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_mastering_display(mut self, mastering_display: MasteringDisplay) -> Self {
+        self.mastering_display = Some(mastering_display);
+        self
+    }
 }
 
 /// Once done with config, call one of the `encode_*` functions
@@ -250,28 +368,87 @@ impl Encoder<'_> {
 
         let width = buffer.width();
         let height = buffer.height();
-        let matrix_coefficients = match self.color_model {
-            ColorModel::YCbCr => MatrixCoefficients::BT601,
-            ColorModel::RGB => MatrixCoefficients::Identity,
-        };
+        let color = self.rgb_color_description();
+        let conversion = RgbConversion::new(color.matrix_coefficients)?;
+        let range = color.pixel_range;
         match self.output_depth {
             BitDepth::Eight => {
-                let planes = buffer.pixels().map(|px| match self.color_model {
-                    ColorModel::YCbCr => rgb_to_8_bit_ycbcr(px.rgb(), BT601).into(),
-                    ColorModel::RGB => rgb_to_8_bit_gbr(px.rgb()).into(),
-                });
+                let planes = buffer.pixels().map(|px| rgb8_to_8_bit_planes(px.rgb(), conversion, range));
                 let alpha = buffer.pixels().map(|px| px.a);
-                self.encode_raw_planes_8_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
+                self.encode_raw_planes_8_bit(width, height, planes, Some(alpha), range, color.matrix_coefficients)
             },
             BitDepth::Ten | BitDepth::Auto => {
-                let planes = buffer.pixels().map(|px| match self.color_model {
-                    ColorModel::YCbCr => rgb_to_10_bit_ycbcr(px.rgb(), BT601).into(),
-                    ColorModel::RGB => rgb_to_10_bit_gbr(px.rgb()).into(),
-                });
+                let planes = buffer.pixels().map(|px| rgb8_to_10_bit_planes(px.rgb(), conversion, range));
                 let alpha = buffer.pixels().map(|px| to_ten(px.a));
-                self.encode_raw_planes_10_bit(width, height, planes, Some(alpha), PixelRange::Full, matrix_coefficients)
+                self.encode_raw_planes_10_bit(width, height, planes, Some(alpha), range, color.matrix_coefficients)
             },
         }
+    }
+
+    /// Color description used for RGB inputs: the configured one (sRGB by default),
+    /// with the matrix forced to `Identity` for [`ColorModel::RGB`].
+    fn rgb_color_description(&self) -> ColorDescription {
+        let mut color = self.color_description.unwrap_or(ColorDescription::SRGB);
+        if self.color_model == ColorModel::RGB {
+            color.matrix_coefficients = MatrixCoefficients::Identity;
+        }
+        color
+    }
+
+    /// Make a new AVIF image from high bit depth RGBA pixels (non-premultiplied, alpha last)
+    ///
+    /// `bit_depth` must be 10 or 12. Sample values must be in `0..=(1 << bit_depth) - 1`
+    /// (larger values are clamped), and already encoded with the transfer function
+    /// set via [`Encoder::with_color_description`]. The AV1 data is encoded at `bit_depth`,
+    /// regardless of [`Encoder::with_bit_depth`].
+    ///
+    /// If all pixels are opaque, the alpha channel will be left out automatically.
+    ///
+    /// `AlphaColorMode::UnassociatedClean` is equivalent to `AlphaColorMode::UnassociatedDirty` for these inputs.
+    /// `AlphaColorMode::Premultiplied` premultiplies the color channels by alpha.
+    pub fn encode_rgba16(&self, buffer: Img<&[RGBA16]>, bit_depth: u8) -> Result<EncodedImage, Error> {
+        let max = max_sample_value(bit_depth)?;
+        if buffer.pixels().all(|px| px.a >= max) {
+            return self.encode_rgb16_internal(buffer.width(), buffer.height(), buffer.pixels().map(|px| px.rgb()), bit_depth);
+        }
+
+        let color = self.rgb_color_description();
+        let conversion = RgbConversion::new(color.matrix_coefficients)?;
+        let range = color.pixel_range;
+        let premultiply = self.alpha_color_mode == AlphaColorMode::Premultiplied;
+        let planes = buffer.pixels().map(move |px| {
+            let a = u32::from(px.a.min(max));
+            let max = u32::from(max);
+            let channel = |c: u16| {
+                let c = u32::from(c).min(max);
+                if premultiply { (c * a + max / 2) / max } else { c }
+            };
+            rgb_to_planes([channel(px.r) as f32, channel(px.g) as f32, channel(px.b) as f32], bit_depth, conversion, range)
+        });
+        let alpha = buffer.pixels().map(move |px| px.a.min(max));
+        self.encode_raw_planes_internal(buffer.width(), buffer.height(), planes, Some(alpha), range, color.matrix_coefficients, bit_depth)
+    }
+
+    /// Make a new AVIF image from high bit depth RGB pixels
+    ///
+    /// `bit_depth` must be 10 or 12. Sample values must be in `0..=(1 << bit_depth) - 1`
+    /// (larger values are clamped), and already encoded with the transfer function
+    /// set via [`Encoder::with_color_description`]. The AV1 data is encoded at `bit_depth`,
+    /// regardless of [`Encoder::with_bit_depth`].
+    #[inline]
+    pub fn encode_rgb16(&self, buffer: Img<&[RGB16]>, bit_depth: u8) -> Result<EncodedImage, Error> {
+        self.encode_rgb16_internal(buffer.width(), buffer.height(), buffer.pixels(), bit_depth)
+    }
+
+    fn encode_rgb16_internal(&self, width: usize, height: usize, pixels: impl Iterator<Item = RGB16> + Send + Sync, bit_depth: u8) -> Result<EncodedImage, Error> {
+        let max = max_sample_value(bit_depth)?;
+        let color = self.rgb_color_description();
+        let conversion = RgbConversion::new(color.matrix_coefficients)?;
+        let range = color.pixel_range;
+        let planes = pixels.map(move |px| {
+            rgb_to_planes([px.r.min(max) as f32, px.g.min(max) as f32, px.b.min(max) as f32], bit_depth, conversion, range)
+        });
+        self.encode_raw_planes_internal(width, height, planes, None::<[_; 0]>, range, color.matrix_coefficients, bit_depth)
     }
 
     fn convert_alpha_8bit(&self, in_buffer: Img<&[RGBA8]>) -> Option<ImgVec<RGBA8>> {
@@ -320,37 +497,24 @@ impl Encoder<'_> {
     }
 
     fn encode_rgb_internal_from_8bit(&self, width: usize, height: usize, pixels: impl Iterator<Item = RGB8> + Send + Sync) -> Result<EncodedImage, Error> {
-        let matrix_coefficients = match self.color_model {
-            ColorModel::YCbCr => MatrixCoefficients::BT601,
-            ColorModel::RGB => MatrixCoefficients::Identity,
-        };
+        let color = self.rgb_color_description();
+        let conversion = RgbConversion::new(color.matrix_coefficients)?;
+        let range = color.pixel_range;
 
         match self.output_depth {
             BitDepth::Eight => {
-                let planes = pixels.map(|px| {
-                    let (y, u, v) = match self.color_model {
-                        ColorModel::YCbCr => rgb_to_8_bit_ycbcr(px, BT601),
-                        ColorModel::RGB => rgb_to_8_bit_gbr(px),
-                    };
-                    [y, u, v]
-                });
-                self.encode_raw_planes_8_bit(width, height, planes, None::<[_; 0]>, PixelRange::Full, matrix_coefficients)
+                let planes = pixels.map(|px| rgb8_to_8_bit_planes(px, conversion, range));
+                self.encode_raw_planes_8_bit(width, height, planes, None::<[_; 0]>, range, color.matrix_coefficients)
             },
             BitDepth::Ten | BitDepth::Auto => {
-                let planes = pixels.map(|px| {
-                    let (y, u, v) = match self.color_model {
-                        ColorModel::YCbCr => rgb_to_10_bit_ycbcr(px, BT601),
-                        ColorModel::RGB => rgb_to_10_bit_gbr(px),
-                    };
-                    [y, u, v]
-                });
-                self.encode_raw_planes_10_bit(width, height, planes, None::<[_; 0]>, PixelRange::Full, matrix_coefficients)
+                let planes = pixels.map(|px| rgb8_to_10_bit_planes(px, conversion, range));
+                self.encode_raw_planes_10_bit(width, height, planes, None::<[_; 0]>, range, color.matrix_coefficients)
             },
         }
     }
 
     /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
-    /// with sRGB transfer characteristics and color primaries.
+    /// with the transfer characteristics and color primaries set via [`Encoder::with_color_description`] (sRGB by default).
     ///
     /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
     /// If there's no alpha, use `None::<[_; 0]>`.
@@ -373,9 +537,9 @@ impl Encoder<'_> {
     }
 
     /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
-    /// with sRGB transfer characteristics and color primaries.
+    /// with the transfer characteristics and color primaries set via [`Encoder::with_color_description`] (sRGB by default).
     ///
-    /// The pixels are 10-bit (values `0.=1023`) in host's native endian.
+    /// The pixels are 10-bit (values `0..=1023`) in host's native endian.
     ///
     /// Alpha always uses full range. Chroma subsampling is not supported, and it's a bad idea for AVIF anyway.
     /// If there's no alpha, use `None::<[_; 0]>`.
@@ -396,6 +560,22 @@ impl Encoder<'_> {
         self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 10)
     }
 
+    /// Encodes AVIF from 3 planar channels that are in the color space described by `matrix_coefficients`,
+    /// with the transfer characteristics and color primaries set via [`Encoder::with_color_description`] (sRGB by default).
+    ///
+    /// The pixels are 12-bit (values `0..=4095`) in host's native endian.
+    ///
+    /// Otherwise the same as [`Encoder::encode_raw_planes_10_bit`].
+    #[inline]
+    pub fn encode_raw_planes_12_bit(
+        &self, width: usize, height: usize,
+        planes: impl IntoIterator<Item = [u16; 3]> + Send,
+        alpha: Option<impl IntoIterator<Item = u16> + Send>,
+        color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
+    ) -> Result<EncodedImage, Error> {
+        self.encode_raw_planes_internal(width, height, planes, alpha, color_pixel_range, matrix_coefficients, 12)
+    }
+
     #[inline(never)]
     fn encode_raw_planes_internal<P: rav1e::Pixel + Default>(
         &self, width: usize, height: usize,
@@ -404,10 +584,26 @@ impl Encoder<'_> {
         color_pixel_range: PixelRange, matrix_coefficients: MatrixCoefficients,
         input_pixels_bit_depth: u8,
     ) -> Result<EncodedImage, Error> {
-        let color_description = Some(ColorDescription {
-            transfer_characteristics: TransferCharacteristics::SRGB,
-            color_primaries: ColorPrimaries::BT709, // sRGB-compatible
+        let color = self.color_description.unwrap_or(ColorDescription::SRGB);
+        // Validate before spending time on encoding, so that the AV1 header and `colr` can't disagree
+        let avif_primaries = avif_color_primaries(color.color_primaries)?;
+        let avif_transfer = avif_transfer_characteristics(color.transfer_characteristics);
+        let avif_matrix = avif_matrix_coefficients(matrix_coefficients)?;
+
+        let color_description = Some(rav1e::prelude::ColorDescription {
+            transfer_characteristics: color.transfer_characteristics,
+            color_primaries: color.color_primaries,
             matrix_coefficients,
+        });
+        let content_light = self.content_light_level.map(|cll| rav1e::color::ContentLight {
+            max_content_light_level: cll.max_content_light_level,
+            max_frame_average_light_level: cll.max_frame_average_light_level,
+        });
+        let mastering_display = self.mastering_display.map(|md| rav1e::color::MasteringDisplay {
+            primaries: md.primaries.map(av1_chromaticity),
+            white_point: av1_chromaticity(md.white_point),
+            max_luminance: to_fixed_point(md.max_luminance, 8),
+            min_luminance: to_fixed_point(md.min_luminance, 14),
         });
 
         let threads = self.threads.map(|threads| {
@@ -426,6 +622,8 @@ impl Encoder<'_> {
                     pixel_range: color_pixel_range,
                     chroma_sampling: ChromaSampling::Cs444,
                     color_description,
+                    content_light,
+                    mastering_display,
                 },
                 move |frame| init_frame_3(width, height, planes, frame),
             )
@@ -443,6 +641,8 @@ impl Encoder<'_> {
                         pixel_range: PixelRange::Full,
                         chroma_sampling: ChromaSampling::Cs400,
                         color_description: None,
+                        content_light: None,
+                        mastering_display: None,
                     },
                     |frame| init_frame_1(width, height, alpha, frame),
                 )
@@ -456,17 +656,24 @@ impl Encoder<'_> {
 
         let mut serializer_config = avif_serialize::Aviffy::new();
         serializer_config
-            .matrix_coefficients(match matrix_coefficients {
-                MatrixCoefficients::Identity => avif_serialize::constants::MatrixCoefficients::Rgb,
-                MatrixCoefficients::BT709 => avif_serialize::constants::MatrixCoefficients::Bt709,
-                MatrixCoefficients::Unspecified => avif_serialize::constants::MatrixCoefficients::Unspecified,
-                MatrixCoefficients::BT601 => avif_serialize::constants::MatrixCoefficients::Bt601,
-                MatrixCoefficients::YCgCo => avif_serialize::constants::MatrixCoefficients::Ycgco,
-                MatrixCoefficients::BT2020NCL => avif_serialize::constants::MatrixCoefficients::Bt2020Ncl,
-                MatrixCoefficients::BT2020CL => avif_serialize::constants::MatrixCoefficients::Bt2020Cl,
-                _ => return Err(Error::Unsupported("matrix coefficients")),
-            })
-            .premultiplied_alpha(self.premultiplied_alpha);
+            .set_color_primaries(avif_primaries)
+            .set_transfer_characteristics(avif_transfer)
+            .set_matrix_coefficients(avif_matrix)
+            .set_full_color_range(color_pixel_range == PixelRange::Full)
+            .set_premultiplied_alpha(self.premultiplied_alpha);
+        if let Some(cll) = self.content_light_level {
+            serializer_config.set_content_light_level(cll.max_content_light_level, cll.max_frame_average_light_level);
+        }
+        if let Some(md) = self.mastering_display {
+            let [red, green, blue] = md.primaries.map(mdcv_chromaticity);
+            // ISOBMFF `mdcv` follows SMPTE ST 2086 order: green, blue, red
+            serializer_config.set_mastering_display(
+                [green, blue, red],
+                mdcv_chromaticity(md.white_point),
+                to_scaled(md.max_luminance, 10000.),
+                to_scaled(md.min_luminance, 10000.),
+            );
+        }
         if let Some(exif) = &self.exif {
             serializer_config.set_exif(exif.to_vec());
         }
@@ -477,6 +684,154 @@ impl Encoder<'_> {
         Ok(EncodedImage {
             avif_file, color_byte_size, alpha_byte_size,
         })
+    }
+}
+
+fn avif_color_primaries(color_primaries: ColorPrimaries) -> Result<avif_serialize::constants::ColorPrimaries, Error> {
+    use avif_serialize::constants::ColorPrimaries as Avif;
+    Ok(match color_primaries {
+        ColorPrimaries::BT709 => Avif::Bt709,
+        ColorPrimaries::Unspecified => Avif::Unspecified,
+        ColorPrimaries::BT601 => Avif::Bt601,
+        ColorPrimaries::BT2020 => Avif::Bt2020,
+        ColorPrimaries::SMPTE431 => Avif::DciP3,
+        ColorPrimaries::SMPTE432 => Avif::DisplayP3,
+        _ => return Err(Error::Unsupported("color primaries")),
+    })
+}
+
+fn avif_transfer_characteristics(transfer_characteristics: TransferCharacteristics) -> avif_serialize::constants::TransferCharacteristics {
+    use avif_serialize::constants::TransferCharacteristics as Avif;
+    match transfer_characteristics {
+        TransferCharacteristics::BT709 => Avif::Bt709,
+        TransferCharacteristics::Unspecified => Avif::Unspecified,
+        TransferCharacteristics::BT470M => Avif::Bt470M,
+        TransferCharacteristics::BT470BG => Avif::Bt470BG,
+        TransferCharacteristics::BT601 => Avif::Bt601,
+        TransferCharacteristics::SMPTE240 => Avif::Smpte240,
+        TransferCharacteristics::Linear => Avif::Linear,
+        TransferCharacteristics::Log100 => Avif::Log,
+        TransferCharacteristics::Log100Sqrt10 => Avif::LogSqrt,
+        TransferCharacteristics::IEC61966 => Avif::Iec61966,
+        TransferCharacteristics::BT1361 => Avif::Bt1361,
+        TransferCharacteristics::SRGB => Avif::Srgb,
+        TransferCharacteristics::BT2020_10Bit => Avif::Bt2020_10,
+        TransferCharacteristics::BT2020_12Bit => Avif::Bt2020_12,
+        TransferCharacteristics::SMPTE2084 => Avif::Smpte2084,
+        TransferCharacteristics::SMPTE428 => Avif::Smpte428,
+        TransferCharacteristics::HLG => Avif::Hlg,
+    }
+}
+
+fn avif_matrix_coefficients(matrix_coefficients: MatrixCoefficients) -> Result<avif_serialize::constants::MatrixCoefficients, Error> {
+    use avif_serialize::constants::MatrixCoefficients as Avif;
+    Ok(match matrix_coefficients {
+        MatrixCoefficients::Identity => Avif::Rgb,
+        MatrixCoefficients::BT709 => Avif::Bt709,
+        MatrixCoefficients::Unspecified => Avif::Unspecified,
+        MatrixCoefficients::BT601 => Avif::Bt601,
+        MatrixCoefficients::YCgCo => Avif::Ycgco,
+        MatrixCoefficients::BT2020NCL => Avif::Bt2020Ncl,
+        MatrixCoefficients::BT2020CL => Avif::Bt2020Cl,
+        _ => return Err(Error::Unsupported("matrix coefficients")),
+    })
+}
+
+/// Unsigned fixed-point with `fraction_bits`, as used by the AV1 metadata OBUs
+#[inline]
+fn to_fixed_point(value: f32, fraction_bits: u32) -> u32 {
+    to_scaled(value, f64::from(1u32 << fraction_bits))
+}
+
+#[inline]
+fn to_scaled(value: f32, scale: f64) -> u32 {
+    (f64::from(value) * scale).round().clamp(0., f64::from(u32::MAX)) as u32
+}
+
+/// 0.16 fixed-point
+#[inline]
+fn av1_chromaticity((x, y): (f32, f32)) -> rav1e::color::ChromaticityPoint {
+    rav1e::color::ChromaticityPoint {
+        x: to_fixed_point(x, 16).min(u16::MAX.into()) as u16,
+        y: to_fixed_point(y, 16).min(u16::MAX.into()) as u16,
+    }
+}
+
+/// Units of 0.00002
+#[inline]
+fn mdcv_chromaticity((x, y): (f32, f32)) -> (u16, u16) {
+    (to_scaled(x, 50000.).min(u16::MAX.into()) as u16, to_scaled(y, 50000.).min(u16::MAX.into()) as u16)
+}
+
+/// Largest sample value of a supported high bit depth
+fn max_sample_value(bit_depth: u8) -> Result<u16, Error> {
+    match bit_depth {
+        10 | 12 => Ok((1 << bit_depth) - 1),
+        _ => Err(Error::Unsupported("bit depth (must be 10 or 12)")),
+    }
+}
+
+/// How RGB inputs are turned into the three coded planes
+#[derive(Debug, Copy, Clone)]
+enum RgbConversion {
+    /// Luma coefficients `[Kr, Kg, Kb]`
+    YCbCr([f32; 3]),
+    /// Planes are G, B, R (`MatrixCoefficients::Identity`)
+    Gbr,
+}
+
+impl RgbConversion {
+    fn new(matrix_coefficients: MatrixCoefficients) -> Result<Self, Error> {
+        Ok(match matrix_coefficients {
+            MatrixCoefficients::Identity => Self::Gbr,
+            MatrixCoefficients::BT601 => Self::YCbCr(BT601),
+            MatrixCoefficients::BT709 => Self::YCbCr(BT709),
+            MatrixCoefficients::BT2020NCL => Self::YCbCr(BT2020),
+            _ => return Err(Error::Unsupported("matrix coefficients for RGB input")),
+        })
+    }
+}
+
+/// Converts RGB in code values of `depth` bits (`0.0..=max`) into planes, quantized per ITU-T H.273
+#[inline(always)]
+fn rgb_to_planes([r, g, b]: [f32; 3], depth: u8, conversion: RgbConversion, range: PixelRange) -> [u16; 3] {
+    let max = ((1u32 << depth) - 1) as f32;
+    let (luma_scale, luma_offset, chroma_scale, chroma_offset) = match range {
+        PixelRange::Full => (1., 0., 1., (1u32 << (depth - 1)) as f32),
+        PixelRange::Limited => {
+            let s = (1u32 << (depth - 8)) as f32;
+            (219. * s / max, 16. * s, 224. * s / max, 128. * s)
+        },
+    };
+    let planes = match conversion {
+        RgbConversion::YCbCr([kr, kg, kb]) => {
+            let y = kr * r + kg * g + kb * b;
+            [
+                y * luma_scale + luma_offset,
+                (b - y) * (0.5 / (1. - kb)) * chroma_scale + chroma_offset,
+                (r - y) * (0.5 / (1. - kr)) * chroma_scale + chroma_offset,
+            ]
+        },
+        RgbConversion::Gbr => [g, b, r].map(|c| c * luma_scale + luma_offset),
+    };
+    planes.map(|v| v.round().clamp(0., max) as u16)
+}
+
+#[inline(always)]
+fn rgb8_to_8_bit_planes(px: RGB8, conversion: RgbConversion, range: PixelRange) -> [u8; 3] {
+    match (conversion, range) {
+        (RgbConversion::YCbCr(matrix), PixelRange::Full) => rgb_to_8_bit_ycbcr(px, matrix).into(),
+        (RgbConversion::Gbr, PixelRange::Full) => rgb_to_8_bit_gbr(px).into(),
+        _ => rgb_to_planes([px.r, px.g, px.b].map(f32::from), 8, conversion, range).map(|v| v as u8),
+    }
+}
+
+#[inline(always)]
+fn rgb8_to_10_bit_planes(px: RGB8, conversion: RgbConversion, range: PixelRange) -> [u16; 3] {
+    match (conversion, range) {
+        (RgbConversion::YCbCr(matrix), PixelRange::Full) => rgb_to_10_bit_ycbcr(px, matrix).into(),
+        (RgbConversion::Gbr, PixelRange::Full) => rgb_to_10_bit_gbr(px).into(),
+        _ => rgb_to_planes([px.r, px.g, px.b].map(|c| f32::from(to_ten(c))), 10, conversion, range),
     }
 }
 
@@ -497,8 +852,9 @@ fn rgb_to_8_bit_gbr(px: rgb::RGB<u8>) -> (u8, u8, u8) {
     (px.g, px.b, px.r)
 }
 
-// const REC709: [f32; 3] = [0.2126, 0.7152, 0.0722];
 const BT601: [f32; 3] = [0.2990, 0.5870, 0.1140];
+const BT709: [f32; 3] = [0.2126, 0.7152, 0.0722];
+const BT2020: [f32; 3] = [0.2627, 0.6780, 0.0593];
 
 #[inline(always)]
 fn rgb_to_ycbcr(px: rgb::RGB<u8>, depth: u8, matrix: [f32; 3]) -> (f32, f32, f32) {
@@ -656,7 +1012,9 @@ struct Av1EncodeConfig {
     pub threads: Option<usize>,
     pub pixel_range: PixelRange,
     pub chroma_sampling: ChromaSampling,
-    pub color_description: Option<ColorDescription>,
+    pub color_description: Option<rav1e::prelude::ColorDescription>,
+    pub content_light: Option<rav1e::color::ContentLight>,
+    pub mastering_display: Option<rav1e::color::MasteringDisplay>,
 }
 
 fn rav1e_config(p: &Av1EncodeConfig) -> Config {
@@ -678,8 +1036,8 @@ fn rav1e_config(p: &Av1EncodeConfig) -> Config {
         chroma_sample_position: ChromaSamplePosition::Unknown,
         pixel_range: p.pixel_range,
         color_description: p.color_description,
-        mastering_display: None,
-        content_light: None,
+        mastering_display: p.mastering_display,
+        content_light: p.content_light,
         enable_timing_info: false,
         still_picture: true,
         error_resilient: false,

@@ -18,16 +18,16 @@ pub use error::Error;
 #[deprecated = "Renamed to `ColorModel`"]
 pub type ColorSpace = ColorModel;
 
-pub use av1encoder::{AlphaColorMode, BitDepth, EncodedImage, Encoder};
+pub use av1encoder::{AlphaColorMode, BitDepth, ColorDescription, ContentLightLevel, EncodedImage, Encoder, MasteringDisplay};
 #[doc(inline)]
-pub use rav1e::prelude::{MatrixCoefficients, PixelRange};
+pub use rav1e::prelude::{ColorPrimaries, MatrixCoefficients, PixelRange, TransferCharacteristics};
 
 mod dirtyalpha;
 
 #[doc(no_inline)]
 pub use imgref::Img;
 #[doc(no_inline)]
-pub use rgb::{RGB8, RGBA8};
+pub use rgb::{RGB16, RGB8, RGBA16, RGBA8};
 
 #[cfg(not(feature = "threading"))]
 mod rayoff {
