@@ -145,3 +145,17 @@ fn encode8_cleans_alpha() {
     assert!(clean.color_byte_size > 2000 && clean.color_byte_size < 6000);
     assert!(clean.color_byte_size < dirty.color_byte_size / 2); // significant reduction in color data
 }
+
+#[test]
+#[cfg(feature = "threading")]
+fn fixed_tiles_make_the_same_bytes_on_any_number_of_threads() {
+    let img = imgref::ImgVec::new((0..256).flat_map(|y| (0..512).map(move |x| {
+        RGB8::new(x as u8, (x ^ y) as u8, y as u8)
+    })).collect(), 512, 256);
+
+    let encode = |threads, tiles| rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap().install(|| {
+        Encoder::new().with_speed(10).with_tiles(tiles).encode_rgb(img.as_ref()).unwrap().avif_file
+    });
+    assert_ne!(encode(1, None), encode(3, None));
+    assert_eq!(encode(1, Some(4)), encode(3, Some(4)));
+}
